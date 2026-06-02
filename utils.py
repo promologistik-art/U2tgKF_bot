@@ -62,59 +62,46 @@ def extract_youtube_channel_username(text: str) -> Optional[str]:
 
 
 def extract_video_id_from_url(url: str) -> Optional[str]:
-    """
-    Извлекает ID видео из ссылки на YouTube.
-    """
-    patterns = [
-        r'(?:https?://)?(?:www\.)?youtube\.com/watch\?v=([a-zA-Z0-9_-]{11})',
-        r'(?:https?://)?(?:www\.)?youtu\.be/([a-zA-Z0-9_-]{11})',
-        r'(?:https?://)?(?:www\.)?youtube\.com/embed/([a-zA-Z0-9_-]{11})',
-        r'(?:https?://)?(?:www\.)?youtube\.com/v/([a-zA-Z0-9_-]{11})',
-        r'(?:https?://)?(?:www\.)?youtube\.com/shorts/([a-zA-Z0-9_-]{11})'
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, url)
-        if match:
-            return match.group(1)
-    return None
+    """Извлекает ID видео из ссылки на YouTube (алиас)."""
+    return extract_youtube_video_id(url)
 
 
-def calculate_score(post: dict, criteria: dict, post_time: datetime = None) -> Tuple[int, bool]:
-    """Рассчитывает рейтинг поста на основе критериев."""
-    views = post.get("views", 0)
-    likes = post.get("likes", 0)
-    reactions = post.get("reactions", 0)  # Для совместимости с Telegram
+def calculate_score(video: dict, criteria: dict, post_time: datetime = None) -> Tuple[int, bool]:
+    """Рассчитывает рейтинг видео на основе критериев."""
+    views = video.get("views", 0)
+    likes = video.get("likes", 0)
+    comments = video.get("comments", 0)
     
     min_views = criteria.get("min_views", 0)
     min_likes = criteria.get("min_likes", 0)
-    min_reactions = criteria.get("min_reactions", 0)  # Для совместимости
+    min_reactions = criteria.get("min_reactions", 0)
     
-    passes_criteria = True
+    passes = True
     if min_views and views < min_views:
-        passes_criteria = False
+        passes = False
     if min_likes and likes < min_likes:
-        passes_criteria = False
-    if min_reactions and reactions < min_reactions:
-        passes_criteria = False
+        passes = False
+    if min_reactions and (likes + comments) < min_reactions:
+        passes = False
     
     if not min_views and not min_likes and not min_reactions:
-        passes_criteria = True
+        passes = True
     
-    if passes_criteria:
-        score = 0
-        if min_views:
-            score += (views // 1000) * 10
-        if min_likes:
-            score += likes
-        if min_reactions:
-            score += reactions
-        if post.get("thumbnail_url") or post.get("has_media", False):
-            score += 5
-        if score == 0:
-            score = 1
-        return (score, False)
-    else:
+    if not passes:
         return (-1, True)
+    
+    # Формула: просмотры / 100 + лайки * 2 + комментарии * 3
+    score = (views / 100) + (likes * 2) + (comments * 3)
+    
+    # Бонус за превью
+    if video.get("thumbnail_url") or video.get("has_media", False):
+        score += 10
+    
+    # Бонус за шортсы (они вируснее)
+    if video.get("is_shorts", False):
+        score *= 1.5
+    
+    return (int(score), False)
 
 
 def clean_caption(text: str, exclude_phrases: List[str] = None) -> str:
@@ -122,34 +109,27 @@ def clean_caption(text: str, exclude_phrases: List[str] = None) -> str:
     if not text:
         return ""
     
-    # Удаление ссылок на Telegram
     text = re.sub(r'(?:https?://)?t\.me/\S+', '', text)
     text = re.sub(r'(?:https?://)?telegram\.me/\S+', '', text)
     text = re.sub(r'@[a-zA-Z0-9_]+', '', text)
     text = re.sub(r'https?://\S+', '', text)
     text = re.sub(r'<[^>]+>', '', text)
     
-    # Удаление рекламных призывов
     ad_patterns = [
         r'[Пп]одписывай(?:те)?(?:сь)?\s*(?:на\s*)?(?:наш(?:и|у|его)?\s*)?(?:канал(?:ы|ов)?|паблик[и]?|сообщество|групп[уы])\s*(?:@?\w+\s*)?(?:[,.]?\s*(?:@?\w+\s*)*)*[.|!]?',
         r'[Сс]тавь(?:те)?\s*(?:лайк|👍|❤️?|🔥|класс)[^.]*\.?',
         r'[Пп]ереход(?:и|ите)?\s*по\s*ссылк[еи][^.]*\.?',
         r'[Пп]одпи(?:шись|сывайся|шитесь)[^.]*\.?',
-        r'(?:MDK|MAX)\s*[|]\s*(?:MDK|MAX)',
-        r'📢\s*@?\w+\s*[➡️👉→]+\s*@?\w+',
-        r'Наши?\s*каналы?\s*[➡️👉→]*\s*@?\w+',
     ]
     for pattern in ad_patterns:
         text = re.sub(pattern, '', text, flags=re.IGNORECASE)
     
-    # Удаление подписей источников со стрелками
     text = re.sub(r'[📢📣🔔➡️👉⬇️👇→]+[^.!?\n]{0,150}$', '', text)
     text = re.sub(r'\s*➡️\s*\S+\s*$', '', text)
     text = re.sub(r'\s*→\s*\S+\s*$', '', text)
     text = re.sub(r'\s*⬇️\s*\S+\s*$', '', text)
     text = re.sub(r'\s*👇\s*\S+\s*$', '', text)
     
-    # Стоп-фразы
     if exclude_phrases:
         for phrase in exclude_phrases:
             phrase = phrase.strip()
@@ -157,12 +137,10 @@ def clean_caption(text: str, exclude_phrases: List[str] = None) -> str:
                 escaped = re.escape(phrase)
                 text = re.sub(escaped, '', text, flags=re.IGNORECASE)
     
-    # Очистка форматирования
     text = re.sub(r'\n\s*\n', '\n\n', text)
     text = re.sub(r' +', ' ', text)
     text = text.strip()
     
-    # Ограничение длины
     if len(text) > 1024:
         text = text[:1021] + "..."
     

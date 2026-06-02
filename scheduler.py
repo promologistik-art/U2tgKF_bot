@@ -44,47 +44,33 @@ class Scheduler:
                 await self._send_daily_report()
 
     async def _send_daily_report(self):
-        """Отправляет админу отчёт за вчерашний день."""
         try:
             now = datetime.utcnow()
             yesterday = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
             today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
             
             async with AsyncSessionLocal() as session:
-                # Пользователи
                 result = await session.execute(select(User))
                 users_count = len(result.scalars().all())
                 
-                # Активные проекты
                 result = await session.execute(select(Project).where(Project.is_active == True))
                 projects = result.scalars().all()
                 projects_count = len(projects)
                 
-                # Активные источники
                 result = await session.execute(select(SourceChannel).where(SourceChannel.is_active == True))
                 sources_count = len(result.scalars().all())
                 
-                # Спарсено за вчера
                 result = await session.execute(
-                    select(PostQueue).where(
-                        PostQueue.created_at >= yesterday,
-                        PostQueue.created_at < today_start
-                    )
+                    select(PostQueue).where(PostQueue.created_at >= yesterday, PostQueue.created_at < today_start)
                 )
                 total_parsed = len(result.scalars().all())
                 
-                # Опубликовано за вчера
                 result = await session.execute(
-                    select(PostQueue).where(
-                        PostQueue.status == "published",
-                        PostQueue.published_at >= yesterday,
-                        PostQueue.published_at < today_start
-                    )
+                    select(PostQueue).where(PostQueue.status == "published", PostQueue.published_at >= yesterday, PostQueue.published_at < today_start)
                 )
                 published_posts = result.scalars().all()
                 total_posted = len(published_posts)
                 
-                # Топ-3 проекта за вчера
                 project_posted = {}
                 for p in published_posts:
                     project_posted[p.project_id] = project_posted.get(p.project_id, 0) + 1
@@ -97,17 +83,11 @@ class Scheduler:
                             top3.append((p.name, project_posted[pid]))
                             break
                 
-                # В очереди сейчас
                 result = await session.execute(select(PostQueue).where(PostQueue.status == "pending"))
                 pending = len(result.scalars().all())
                 
-                # Ошибок за вчера
                 result = await session.execute(
-                    select(PostQueue).where(
-                        PostQueue.status == "failed",
-                        PostQueue.created_at >= yesterday,
-                        PostQueue.created_at < today_start
-                    )
+                    select(PostQueue).where(PostQueue.status == "failed", PostQueue.created_at >= yesterday, PostQueue.created_at < today_start)
                 )
                 failed = len(result.scalars().all())
             
@@ -173,6 +153,67 @@ class Scheduler:
                     self._tasks[task_key] = task
                     logger.info(f"⏰ Project '{project.name}' (ID: {project.id}) scheduled")
 
+    async def _download_media(self, video_url: str, save_path: str, max_duration: int = None) -> bool:
+        """Скачивает видео через yt-dlp. Если не установлен — скачивает превью."""
+        try:
+            import yt_dlp
+            
+            ydl_opts = {
+                'outtmpl': save_path.replace('.mp4', '') + '.%(ext)s',
+                'format': 'best[height<=720]',
+                'quiet': True,
+                'no_warnings': True,
+                'max_filesize': 50 * 1024 * 1024,  # 50 MB max
+            }
+            
+            if max_duration:
+                ydl_opts['duration'] = max_duration
+            
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, lambda: self._do_download(ydl_opts, video_url))
+            
+            # yt-dlp может изменить расширение
+            import glob
+            base = save_path.replace('.mp4', '')
+            files = glob.glob(base + '.*')
+            if files:
+                real_path = files[0]
+                if os.path.getsize(real_path) > 1000:
+                    # Переименовываем в ожидаемый путь
+                    if real_path != save_path:
+                        os.rename(real_path, save_path)
+                    return True
+            
+            return False
+        except ImportError:
+            logger.info("yt-dlp not installed, downloading thumbnail instead")
+            return await self._download_thumbnail(video_url, save_path.replace('.mp4', '.jpg'))
+        except Exception as e:
+            logger.error(f"Video download failed: {e}")
+            return False
+
+    def _do_download(self, ydl_opts, url):
+        import yt_dlp
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+
+    async def _download_thumbnail(self, url: str, save_path: str) -> bool:
+        """Скачивает превью видео."""
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=30) as resp:
+                    if resp.status == 200:
+                        content = await resp.read()
+                        if len(content) > 1000:
+                            with open(save_path, "wb") as f:
+                                f.write(content)
+                            return True
+            return False
+        except Exception as e:
+            logger.error(f"Thumbnail download error: {e}")
+            return False
+
     async def _process_project(self, project: Project):
         logger.info(f"🔍 Processing YouTube project '{project.name}' (ID: {project.id})")
         
@@ -219,22 +260,17 @@ class Scheduler:
                     videos = []
                     if source.source_type == "channel":
                         if not source.youtube_channel_id:
-                            logger.warning(f"Channel ID missing for source {source.id}")
                             continue
                         videos = await scraper.get_videos_from_channel(source.youtube_channel_id, limit=20)
-                    
                     elif source.source_type == "link":
                         if not source.youtube_link_url:
-                            logger.warning(f"Link URL missing for source {source.id}")
                             continue
                         video = await scraper.get_video_by_url(source.youtube_link_url)
                         if video:
                             videos = [video]
-                    
                     elif source.source_type == "search":
                         query = source.youtube_search_query
                         if not query:
-                            logger.warning(f"Search query missing for source {source.id}")
                             continue
                         videos = await scraper.search_videos(
                             query=query,
@@ -245,7 +281,6 @@ class Scheduler:
                         )
                     
                     logger.info(f"📨 '{source.name}': {len(videos)} videos fetched")
-                
                 except Exception as e:
                     logger.error(f"❌ Failed to fetch from '{source.name}': {e}")
                     continue
@@ -263,7 +298,6 @@ class Scheduler:
                                 published = datetime.fromisoformat(video["published_at"].replace("Z", "+00:00"))
                                 age_hours = (datetime.utcnow() - published).total_seconds() / 3600
                                 if age_hours > source.max_age_hours:
-                                    logger.debug(f"⏭️ Video too old: {age_hours:.1f}h > {source.max_age_hours}h")
                                     continue
                             except:
                                 pass
@@ -272,7 +306,6 @@ class Scheduler:
                         keywords = [k.strip().lower() for k in source.include_keywords.split(",") if k.strip()]
                         video_text = (video.get("title", "") + " " + video.get("description", "")).lower()
                         if not any(keyword in video_text for keyword in keywords):
-                            logger.debug(f"⏭️ No keywords in video '{video.get('title', '')}'")
                             continue
                     
                     if source.media_filter == "shorts_only":
@@ -301,31 +334,42 @@ class Scheduler:
                     if source.max_video_duration and source.max_video_duration > 0:
                         dur = best_video.get("duration_seconds", 0)
                         if dur > 0 and dur > source.max_video_duration:
-                            logger.info(f"⏰ Video too long from '{source.name}': {dur}s > {source.max_video_duration}s")
+                            logger.info(f"⏰ Video too long: {dur}s > {source.max_video_duration}s")
                             continue
                     
                     logger.info(
                         f"🏆 Selected from '{source.name}': score={best_score}, "
-                        f"title='{best_video.get('title', '')[:30]}...', "
-                        f"duration={best_video.get('duration_seconds', 0)}s"
+                        f"title='{best_video.get('title', '')[:30]}...'"
                     )
                     
                     await mark_post_parsed(project.id, source.id, best_video["url"])
                     total_parsed += 1
                     
+                    # Скачивание видео (или превью если yt-dlp не установлен)
                     media_downloaded = False
-                    if best_video.get("thumbnail_url"):
-                        filename = f"{uuid.uuid4()}.jpg"
+                    video_url = best_video.get("url", "")
+                    if video_url:
+                        ext = "mp4"
+                        filename = f"{uuid.uuid4()}.{ext}"
                         media_path = os.path.join(Config.TEMP_DIR, filename)
-                        if await self._download_thumbnail(scraper, best_video["thumbnail_url"], media_path):
+                        
+                        if await self._download_media(video_url, media_path, source.max_video_duration):
                             best_video["media_path"] = media_path
-                            best_video["media_type"] = "photo"
+                            best_video["media_type"] = "video"
                             media_downloaded = True
-                            logger.info(f"💾 Thumbnail saved: {media_path}")
+                            logger.info(f"💾 Video saved: {media_path}")
+                        else:
+                            # Fallback: скачиваем превью
+                            thumb_url = best_video.get("thumbnail_url", "")
+                            if thumb_url:
+                                thumb_path = os.path.join(Config.TEMP_DIR, f"{uuid.uuid4()}.jpg")
+                                if await self._download_thumbnail(thumb_url, thumb_path):
+                                    best_video["media_path"] = thumb_path
+                                    best_video["media_type"] = "photo"
+                                    media_downloaded = True
                     
-                    has_text = bool(best_video.get("description", "").strip()) or bool(best_video.get("title", "").strip())
+                    has_text = bool(best_video.get("title", "").strip())
                     if not has_text and not media_downloaded:
-                        logger.info(f"📭 Empty video from '{source.name}', skipping")
                         continue
                     
                     posts_to_publish.append(best_video)
@@ -348,7 +392,6 @@ class Scheduler:
             start_hour = project.active_hours_start
             end_hour = project.active_hours_end
             
-            # Расчёт времени для первого поста
             minutes_since_start = (msk_now.hour - start_hour) * 60 + msk_now.minute
             if minutes_since_start < 0:
                 next_time = msk_now.replace(hour=start_hour, minute=0, second=0, microsecond=0)
@@ -388,23 +431,6 @@ class Scheduler:
                 await session.commit()
         
         logger.info(f"✅ Project '{project.name}' processing completed")
-
-    async def _download_thumbnail(self, scraper, url: str, save_path: str) -> bool:
-        """Скачивает превью видео."""
-        try:
-            import aiohttp
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=30) as resp:
-                    if resp.status == 200:
-                        content = await resp.read()
-                        if len(content) > 1000:
-                            with open(save_path, "wb") as f:
-                                f.write(content)
-                            return True
-            return False
-        except Exception as e:
-            logger.error(f"Thumbnail download error: {e}")
-            return False
 
     async def stop(self):
         self._running = False
