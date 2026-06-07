@@ -1,10 +1,147 @@
+
+Контент фабрика
+1000 подписчиков
+Отладка тг2тг
+U2TG
+Fix парсер бота
+youtubebot
+Telegram Search API Bot Guide
+Content Factory
+Дата через 120 дней
+FoodTracker Bot
+Отладка парсер бота
+Сбор базы каналов для интеграций
+Восстановление текста из кракозябр
+Гибкий подход к лидогенерации мебели
+Скрипт бота Евгений
+Script for beginner technician bot
+Спор с озоном
+Оценка навыков разработчика ботов
+Установка Claude на домашний ПК
+Ведение журнала давления
+Очистка липучки от клея
+Очистка липучки шлифмашинки от клея
+Search mp
+парсинг бот
+Обход блокировки VK API для постинга видео
+Создание бота для автопостинга видео из Telegram в VK
+КБЖУ 3 литров пива
+Оплата выдачи заказов на ПВЗ Озон
+Синонимы слова деньги
+2DO бот
+Приоритеты заработка на проектах
+1000 фраз для приятного сна
+Avatar creation prompt for three actresses
+DeepSeek Model Identification
+Создание бота для репоста видео из Telegram в VK
+Подборка цитат из литературы мира
+Письмо ИП без печати реквизиты
+Песочное печенье с вареньем из муки и масла
+Скрипт бота для парсинга и репоста постов
+КБЖУ 3.1
+ИП не платит НДС при ошибке в платеже
+Замена роутера TP Link Archer C5
+КБЖУ финал
+YouTube Monetization Rules 2026
+Создание бота для юнит экономики и ABC анализа
+Монетизация навыков создания ботов
+Декларация 1,2
+Рецепт лепешки без дрожжей
+Копирование ЭЦП с флешки на компьютер
+Запекание форели в фольге
+Как создать хостинг для бота
+Монетизация ботов без бюджета
+Сдача отчетности ИП на УСН через ЛК
+Декларация
+DeepSeek nutrition bot feasibility
+КБЖУ куриных яиц
+КБЖУ расчет завтрака
+КБЖУ 2.0
+кбжу 1.1.
+Стоимость составления 3-НДФЛ в 2026
+Создание бота для подсчета КБЖУ
+Варианты обеда при диете стол 9
+КБЖУ
+Create Telegram Auto Comment Bot
+Продвижение и релиз
+Run Calorizator Parser Locally
+Bot v7.3 improvements and next steps
+20/03 комиссии
+Create MPStats Telegram Bot
+Уточнение запроса стол 9
+Integrate commission calculation into bot
+Integrate commission calculation into bot
+Интеграция ботов для расчета комиссий
+Создание сервиса липсинка
+OpenClaw AI Assistant Guide
+Настройка админки бота
+бот для парсинга комиссий
+Создание справочника комиссий для бота
+Ошибка логики подстановки комиссий
+Исправление ошибок админ панели бота
+добавление расчета комиссии
+7.2 кнопки и админка
+Создание кнопок для чатбота
+Иван Ефремов Лезвие бритвы
+Расчет покупок и остатка
+Редактирование и тестирование Python на GitHub
+Создание ботов на Python в 3ds Max
+Поиск функции создания шаблона Excel
+7.1
+Суммирование чисел из списка
+Как запустить проект The Agency
+Помощь с проектом agency agents
+Помощь в исправлении ошибок бота
+поисковик 5 0803
+Корректировка бота SearchMP
+Оценка экономического потенциала SearchMP
+Решение проблемы объема товара
+Анализ бота для поиска товаров на Ozon
+Поисковик с оплатой на ип
+Запрос информации о проекте
+Контент фабрика
+Вот исправленный блок удаления проекта. Замени в projects_callback эту часть:
+
+python
+elif data.startswith("confirm_delete_") and not data.startswith("confirm_delete_source"):
+    project_id = int(data.replace("confirm_delete_", ""))
+    async with AsyncSessionLocal() as session:
+        await session.execute(delete(SourceChannel).where(SourceChannel.project_id == project_id))
+        await session.execute(delete(TargetChannel).where(TargetChannel.project_id == project_id))
+        await session.execute(delete(PostQueue).where(PostQueue.project_id == project_id))
+        await session.execute(delete(Project).where(Project.id == project_id))
+        await session.commit()
+    if context.user_data.get(CURRENT_PROJECT_KEY) == project_id:
+        context.user_data.pop(CURRENT_PROJECT_KEY, None)
+    await query.edit_message_text("✅ Проект удалён")
+Замени на:
+
+python
+elif data.startswith("confirm_delete_") and not data.startswith("confirm_delete_source"):
+    project_id = int(data.replace("confirm_delete_", ""))
+    async with AsyncSessionLocal() as session:
+        from models import ParsedPost, PublishedPost
+        await session.execute(delete(ParsedPost).where(ParsedPost.project_id == project_id))
+        await session.execute(delete(PublishedPost).where(PublishedPost.project_id == project_id))
+        await session.execute(delete(PostQueue).where(PostQueue.project_id == project_id))
+        await session.execute(delete(SourceChannel).where(SourceChannel.project_id == project_id))
+        await session.execute(delete(TargetChannel).where(TargetChannel.project_id == project_id))
+        await session.execute(delete(Project).where(Project.id == project_id))
+        await session.commit()
+    if context.user_data.get(CURRENT_PROJECT_KEY) == project_id:
+        context.user_data.pop(CURRENT_PROJECT_KEY, None)
+    await query.edit_message_text("✅ Проект удалён")
+Добавилось удаление ParsedPost и PublishedPost перед удалением проекта. Та же правка нужна в TG2TG12 и U2TG.
+
+полный
+python
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from sqlalchemy import select, delete
 from config import Config
 from database import AsyncSessionLocal
-from models import User, Project, SourceChannel, TargetChannel, PostQueue
+from models import User, Project, SourceChannel, TargetChannel, PostQueue, ParsedPost, PublishedPost
 from .utils import (
     get_current_project, get_sources_count, get_project_target,
     get_user_projects_count, check_user_access, check_action_limit
@@ -111,12 +248,19 @@ async def project_menu_callback(update: Update, context: ContextTypes.DEFAULT_TY
     
     target_name = target.channel_title if target else 'не задана'
     
+    # post_interval_hours теперь хранит минуты
+    if project.post_interval_hours < 60:
+        interval_display = f"каждые {project.post_interval_hours} мин"
+    else:
+        hours = project.post_interval_hours // 60
+        interval_display = f"каждые {hours} ч"
+    
     text = (
         f"📁 <b>Проект «{project.name}»</b>\n\n"
         f"📥 Источников: {sources_count}\n"
         f"📤 Цель: {target_name}\n"
         f"⏰ Парсинг: каждые {project.check_interval_minutes} мин\n"
-        f"📅 Постинг: каждые {project.post_interval_hours} ч\n"
+        f"📅 Постинг: {interval_display}\n"
         f"🕐 Активные часы: {project.active_hours_start}:00 – {project.active_hours_end}:00\n"
         f"📊 Сегодня: спарсено {project.posts_parsed_today} / опубликовано {project.posts_posted_today}\n"
         f"📬 В очереди: {pending}\n"
@@ -157,8 +301,11 @@ async def projects_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not can_create and not user.is_admin:
             await query.edit_message_text(f"❌ {limit_msg}")
             return
-        await query.edit_message_text("📁 Введите название нового проекта:")
+        
+        await _reset_all_dialogs(context)
         context.user_data['awaiting_project_name'] = True
+        
+        await query.edit_message_text("📁 Введите название нового проекта:\n/cancel — отмена")
         return
     
     if data.startswith("select_project_"):
@@ -228,9 +375,11 @@ async def projects_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("confirm_delete_") and not data.startswith("confirm_delete_source"):
         project_id = int(data.replace("confirm_delete_", ""))
         async with AsyncSessionLocal() as session:
+            await session.execute(delete(ParsedPost).where(ParsedPost.project_id == project_id))
+            await session.execute(delete(PublishedPost).where(PublishedPost.project_id == project_id))
+            await session.execute(delete(PostQueue).where(PostQueue.project_id == project_id))
             await session.execute(delete(SourceChannel).where(SourceChannel.project_id == project_id))
             await session.execute(delete(TargetChannel).where(TargetChannel.project_id == project_id))
-            await session.execute(delete(PostQueue).where(PostQueue.project_id == project_id))
             await session.execute(delete(Project).where(Project.id == project_id))
             await session.commit()
         if context.user_data.get(CURRENT_PROJECT_KEY) == project_id:
@@ -245,10 +394,28 @@ async def projects_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_project_stats(query, project_id)
 
 
+async def _reset_all_dialogs(context: ContextTypes.DEFAULT_TYPE):
+    """Сбрасывает все флаги активных диалогов."""
+    keys_to_remove = [
+        'temp_project_id', 'temp_post_interval', 'temp_media_filter',
+        'temp_max_video_duration', 'temp_criteria', 'edit_source_id',
+        'awaiting_criteria', 'awaiting_duration', 'awaiting_text_choice',
+        'edit_views', 'edit_media_filter', 'temp_source', 'temp_project_name',
+        'temp_criteria_views', 'temp_source_id', 'delete_source_id',
+        'awaiting_broadcast', 'awaiting_project_name'
+    ]
+    for key in keys_to_remove:
+        context.user_data.pop(key, None)
+    logger.info("Dialogs reset before project creation")
+
+
 async def handle_project_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает ввод названия нового проекта."""
     if not context.user_data.get('awaiting_project_name'):
         return
+    
+    await _reset_all_dialogs(context)
+    context.user_data['awaiting_project_name'] = True
     
     name = update.message.text.strip()
     telegram_id = update.effective_user.id
@@ -274,7 +441,7 @@ async def handle_project_name(update: Update, context: ContextTypes.DEFAULT_TYPE
             user_id=telegram_id,
             name=name,
             check_interval_minutes=user.min_check_interval_minutes,
-            post_interval_hours=max(user.min_post_interval_minutes // 60, 1),
+            post_interval_hours=max(user.min_post_interval_minutes, 60),
             active_hours_start=Config.DEFAULT_ACTIVE_HOURS_START,
             active_hours_end=Config.DEFAULT_ACTIVE_HOURS_END
         )
@@ -315,7 +482,7 @@ async def show_project_stats(query, project_id: int):
         f"📥 Источников: {sources_count}\n"
         f"📤 Цель: {target_name}\n"
         f"⏰ Интервал парсинга: {project.check_interval_minutes} мин\n"
-        f"📅 Интервал публикации: {project.post_interval_hours} ч\n"
+        f"📅 Интервал публикации: {project.post_interval_hours} мин\n"
         f"📈 Сегодня: спарсено {project.posts_parsed_today}, опубликовано {project.posts_posted_today}\n"
         f"📬 В очереди: {pending}"
     )
@@ -328,5 +495,6 @@ async def back_to_projects_callback(update: Update, context: ContextTypes.DEFAUL
     """Возвращает к списку проектов."""
     query = update.callback_query
     await query.answer()
-    context.user_data.pop(CURRENT_PROJECT_KEY, None)
     await my_projects(update, context)
+
+
