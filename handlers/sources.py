@@ -162,7 +162,6 @@ async def youtube_channel_id_input(update: Update, context: ContextTypes.DEFAULT
         'project_name': context.user_data.get('temp_project_name')
     }
     
-    # Переходим к выбору страны для канала
     return await show_country_selection(update, context)
 
 
@@ -183,7 +182,6 @@ async def youtube_link_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         'project_name': context.user_data.get('temp_project_name')
     }
     
-    # Для ссылки тоже показываем критерии
     return await show_criteria_selection(update, context, video['title'][:50])
 
 
@@ -198,7 +196,6 @@ async def youtube_search_query_input(update: Update, context: ContextTypes.DEFAU
 
 
 async def show_country_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает выбор страны (общий для channel и search)."""
     keyboard = []
     row = []
     countries_list = list(COUNTRIES.items())
@@ -215,7 +212,7 @@ async def show_country_selection(update: Update, context: ContextTypes.DEFAULT_T
     if context.user_data.get('youtube_search_query'):
         msg += f"\nЗапрос: <code>{context.user_data['youtube_search_query']}</code>"
     
-    if hasattr(update, 'callback_query') and update.callback_query:
+    if update.callback_query:
         await update.callback_query.edit_message_text(
             msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
         )
@@ -320,7 +317,7 @@ async def show_criteria_selection(update: Update, context: ContextTypes.DEFAULT_
     
     msg = f"✅ Источник: {source_name}\n\nВыберите критерии отбора:"
     
-    if hasattr(update, 'callback_query') and update.callback_query:
+    if update.callback_query:
         await update.callback_query.edit_message_text(
             msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
         )
@@ -421,12 +418,10 @@ async def media_filter_callback(update: Update, context: ContextTypes.DEFAULT_TY
     choice = query.data.replace("media_", "")
     context.user_data['temp_media_filter'] = choice
     
-    # Для shorts_only — без ограничений по длительности
     if choice == "shorts_only":
         context.user_data['temp_max_video_duration'] = None
         return await ask_remove_text(query, context)
     
-    # Для all и long_only — показываем выбор длительности
     keyboard = [
         [InlineKeyboardButton("📏 До 1 минуты", callback_data="duration_60")],
         [InlineKeyboardButton("📏 До 3 минут", callback_data="duration_180")],
@@ -491,7 +486,6 @@ async def remove_text_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         return ConversationHandler.END
     
     async with AsyncSessionLocal() as session:
-        # Проверка на дубликат
         if temp['source_type'] == 'channel':
             existing = await session.execute(
                 select(SourceChannel).where(
@@ -977,7 +971,6 @@ async def edit_keywords_input(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def _edit_back_to_menu(update, context, source_id):
-    """Возвращает к меню редактирования источника."""
     class FakeQuery:
         def __init__(self, chat_id, message_id, bot):
             self.message = type('obj', (object,), {'chat_id': chat_id, 'message_id': message_id})
