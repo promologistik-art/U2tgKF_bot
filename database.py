@@ -24,18 +24,34 @@ async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     
-    # === ДОБАВЛЕНИЕ КОЛОНКИ download_mode (если её нет) ===
+    # === ДОБАВЛЕНИЕ КОЛОНКИ download_mode (исправленная версия) ===
     table_name = f"{Config.TABLE_PREFIX}source_channels"
     async with AsyncSessionLocal() as session:
-        try:
-            # Проверяем, существует ли колонка
-            await session.execute(text(f"SELECT download_mode FROM {table_name} LIMIT 1;"))
-        except Exception:
-            # Колонки нет — добавляем
-            await session.execute(text(f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS download_mode VARCHAR DEFAULT 'preview';"))
-            await session.commit()
-            logger.info(f"✅ Added column 'download_mode' to {table_name}")
-    # ====================================================
+        # Проверяем существование колонки через information_schema
+        result = await session.execute(
+            text(
+                "SELECT EXISTS ("
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_name = :table_name AND column_name = 'download_mode'"
+                ")"
+            ),
+            {"table_name": table_name}
+        )
+        exists = result.scalar()
+        
+        if not exists:
+            try:
+                await session.execute(
+                    text(f"ALTER TABLE {table_name} ADD COLUMN download_mode VARCHAR DEFAULT 'preview';")
+                )
+                await session.commit()
+                logger.info(f"✅ Added column 'download_mode' to {table_name}")
+            except Exception as e:
+                logger.error(f"Failed to add column: {e}")
+                await session.rollback()
+        else:
+            logger.info(f"ℹ️ Column 'download_mode' already exists in {table_name}")
+    # ============================================================
     
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(User).where(User.telegram_id == Config.ADMIN_ID))
