@@ -9,7 +9,7 @@ import logging
 import sys
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
-    MessageHandler, filters
+    MessageHandler, filters, ConversationHandler
 )
 
 from config import Config
@@ -27,6 +27,7 @@ from handlers import (
     add_source_criteria,
     media_filter_callback,
     duration_callback,
+    download_mode_callback,
     remove_text_callback,
     add_keywords_skip_callback,
     handle_source_input,
@@ -37,6 +38,7 @@ from handlers import (
     edit_source_start,
     edit_media_filter_callback,
     edit_remove_text_callback,
+    edit_download_mode_callback,
     add_target_start, add_target_forward, add_target_continue_callback,
     my_targets, delete_target_callback,
     set_interval_start, set_interval_callback,
@@ -141,6 +143,7 @@ async def main():
     app.add_handler(CallbackQueryHandler(add_source_criteria, pattern="^u2tg_criteria_"))
     app.add_handler(CallbackQueryHandler(media_filter_callback, pattern="^u2tg_media_"))
     app.add_handler(CallbackQueryHandler(duration_callback, pattern="^u2tg_duration_"))
+    app.add_handler(CallbackQueryHandler(download_mode_callback, pattern="^u2tg_dl_"))
     app.add_handler(CallbackQueryHandler(remove_text_callback, pattern="^u2tg_text_"))
     app.add_handler(CallbackQueryHandler(add_keywords_skip_callback, pattern="^u2tg_keywords_skip"))
     
@@ -150,9 +153,10 @@ async def main():
     app.add_handler(CallbackQueryHandler(confirm_delete_source_callback, pattern="^confirm_delete_source$"))
     app.add_handler(CallbackQueryHandler(cancel_delete_source_callback, pattern="^cancel_delete_source$"))
     app.add_handler(CallbackQueryHandler(back_to_sources_callback, pattern="^back_to_sources$"))
-    app.add_handler(CallbackQueryHandler(edit_source_start, pattern="^edit_(criteria|media|text|phrases|clear_phrases|keywords)_"))
+    app.add_handler(CallbackQueryHandler(edit_source_start, pattern="^edit_(criteria|media|text|phrases|clear_phrases|keywords|download)_"))
     app.add_handler(CallbackQueryHandler(edit_media_filter_callback, pattern="^edit_media_"))
     app.add_handler(CallbackQueryHandler(edit_remove_text_callback, pattern="^edit_text_"))
+    app.add_handler(CallbackQueryHandler(edit_download_mode_callback, pattern="^edit_dl_"))
     
     app.add_handler(CallbackQueryHandler(delete_target_callback, pattern="^del_target_"))
     app.add_handler(CallbackQueryHandler(project_menu_callback, pattern="^project_menu_"))
@@ -167,12 +171,9 @@ async def main():
     app.add_handler(CallbackQueryHandler(set_post_start_time_callback, pattern="^starttime_"))
     
     # ============ Message Handlers ============
-    # Reply handler для добавления/редактирования источников (должен быть первым)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.REPLY, handle_source_input))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.REPLY, handle_edit_reply))
-    # Обработчик названия проекта
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_source_input))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_reply))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_project_name))
-    # Пересланные сообщения для add_target
     app.add_handler(MessageHandler(filters.FORWARDED, add_target_forward))
     
     await app.initialize()
