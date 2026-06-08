@@ -1,7 +1,7 @@
 import os
 import logging
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy import select
+from sqlalchemy import select, text
 from datetime import datetime, timedelta
 from config import Config
 from models import Base, User, Project
@@ -20,8 +20,22 @@ parsed_urls = {}
 
 
 async def init_db():
+    """Создаёт таблицы и добавляет недостающие колонки."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    
+    # === ДОБАВЛЕНИЕ КОЛОНКИ download_mode (если её нет) ===
+    table_name = f"{Config.TABLE_PREFIX}source_channels"
+    async with AsyncSessionLocal() as session:
+        try:
+            # Проверяем, существует ли колонка
+            await session.execute(text(f"SELECT download_mode FROM {table_name} LIMIT 1;"))
+        except Exception:
+            # Колонки нет — добавляем
+            await session.execute(text(f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS download_mode VARCHAR DEFAULT 'preview';"))
+            await session.commit()
+            logger.info(f"✅ Added column 'download_mode' to {table_name}")
+    # ====================================================
     
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(User).where(User.telegram_id == Config.ADMIN_ID))
