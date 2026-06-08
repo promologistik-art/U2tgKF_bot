@@ -289,7 +289,6 @@ async def show_criteria_selection(update: Update, context: ContextTypes.DEFAULT_
 
     context.user_data[DIALOG_STEP] = "selecting_criteria"
 
-    # Определяем, откуда пришёл вызов
     if update.callback_query:
         await update.callback_query.edit_message_text(
             f"✅ Источник: {source_name}\n\nВыберите критерии отбора:",
@@ -401,7 +400,7 @@ async def media_filter_callback(update: Update, context: ContextTypes.DEFAULT_TY
     if choice == "shorts_only":
         context.user_data['temp_max_video_duration'] = None
         await ask_download_mode(update, context)
-        return  # <--- ВАЖНО: выход из функции
+        return
 
     keyboard = [
         [InlineKeyboardButton("📏 До 1 минуты", callback_data="u2tg_duration_60")],
@@ -427,7 +426,7 @@ async def duration_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['temp_max_video_duration'] = duration if duration > 0 else None
 
     await ask_download_mode(update, context)
-    return  # <--- ВАЖНО: выход из функции
+    return
 
 
 async def ask_download_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -438,7 +437,6 @@ async def ask_download_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data[DIALOG_STEP] = "selecting_download"
 
-    # Определяем, откуда пришёл вызов
     if update.callback_query:
         await update.callback_query.edit_message_text(
             "📥 <b>Режим скачивания:</b>\n\nВыберите, как загружать видео:",
@@ -503,7 +501,6 @@ async def remove_text_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     async with AsyncSessionLocal() as session:
-        # Проверка дубликата
         if temp['source_type'] == 'channel':
             existing = await session.execute(
                 select(SourceChannel).where(
@@ -544,7 +541,7 @@ async def remove_text_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             media_filter=media_filter,
             remove_original_text=remove_text,
             max_video_duration=max_video_duration,
-            download_mode=download_mode,
+            # download_mode=download_mode,  # Временно отключено
             max_age_hours=24
         )
         session.add(channel)
@@ -653,8 +650,6 @@ def _clear_dialog(context):
     for k in keys:
         context.user_data.pop(k, None)
 
-
-# ============ РЕДАКТИРОВАНИЕ ============
 
 async def edit_source_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -895,8 +890,6 @@ async def handle_edit_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return False
 
 
-# ============ СПИСОК ИСТОЧНИКОВ ============
-
 async def my_sources(update: Update, context: ContextTypes.DEFAULT_TYPE):
     telegram_id = update.effective_user.id
     project = await require_project(update, context)
@@ -949,8 +942,6 @@ async def my_sources(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
 
-
-# ============ УДАЛЕНИЕ ============
 
 async def delete_source_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
