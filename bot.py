@@ -81,7 +81,6 @@ async def main():
     await init_db()
     logger.info("Database initialized")
     
-    # === Регистрируем клона в KontentFabrik ===
     await register_self()
     
     app = Application.builder().token(Config.BOT_TOKEN).build()
@@ -379,7 +378,7 @@ async def main():
     app.add_handler(set_signature_conv)
     app.add_handler(broadcast_conv)
     
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_project_name))
+    # app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_project_name))
     
     await app.initialize()
     await app.start()
