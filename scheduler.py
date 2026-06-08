@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import select, update
 from database import AsyncSessionLocal, is_post_parsed, mark_post_parsed
 from models import User, Project, SourceChannel, TargetChannel, PostQueue, PublishedPost
-from scrapers import TelegramScraper
+from scrapers import YouTubeScraper
 from posters import TelegramPoster
 from utils import calculate_score, get_moscow_time
 from config import Config
