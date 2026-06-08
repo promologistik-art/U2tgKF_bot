@@ -235,7 +235,7 @@ async def main():
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
-        per_message=False
+        per_message=True
     )
     
     edit_source_conv = ConversationHandler(
