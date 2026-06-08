@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes, ConversationHandler
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ForceReply
+from telegram.ext import ContextTypes
 from sqlalchemy import select, update as sql_update, delete
 from database import AsyncSessionLocal
 from models import User, SourceChannel
@@ -19,25 +19,7 @@ from .utils import (
     check_action_limit,
     check_user_access
 )
-from .constants import (
-    AWAITING_YOUTUBE_SOURCE_TYPE,
-    AWAITING_YOUTUBE_CHANNEL_ID,
-    AWAITING_YOUTUBE_LINK,
-    AWAITING_YOUTUBE_SEARCH_QUERY,
-    AWAITING_YOUTUBE_COUNTRY,
-    AWAITING_YOUTUBE_CATEGORY,
-    AWAITING_YOUTUBE_CONTENT_TYPE,
-    AWAITING_VIEWS,
-    AWAITING_REACTIONS,
-    AWAITING_MEDIA_FILTER,
-    AWAITING_REMOVE_TEXT,
-    AWAITING_KEYWORDS,
-    AWAITING_EDIT_VIEWS,
-    AWAITING_EDIT_REACTIONS,
-    AWAITING_EDIT_EXCLUDE_PHRASES,
-    AWAITING_EDIT_KEYWORDS,
-    CURRENT_PROJECT_KEY
-)
+from .constants import CURRENT_PROJECT_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -50,109 +32,136 @@ COUNTRIES = {
 }
 
 CATEGORIES = {
-    '1': 'Фильмы и анимация', '2': 'Авто и транспорт', '10': 'Музыка',
-    '15': 'Животные', '17': 'Спорт', '19': 'Путешествия', '20': 'Игры',
-    '22': 'Люди и блоги', '23': 'Комедия', '24': 'Развлечения',
-    '25': 'Новости и политика', '26': 'Как это работает', '27': 'Образование',
-    '28': 'Наука и технологии', '42': 'Кулинария', '43': 'DIY', '44': 'Обзоры товаров'
+    '1': 'Фильмы', '2': 'Авто', '10': 'Музыка', '15': 'Животные',
+    '17': 'Спорт', '19': 'Путешествия', '20': 'Игры', '22': 'Блоги',
+    '23': 'Комедия', '24': 'Развлечения', '25': 'Новости', '26': 'DIY',
+    '27': 'Образование', '28': 'Технологии', '42': 'Кулинария'
 }
+
+# Типы диалогов в user_data
+DIALOG_SOURCE_TYPE = "u2tg_source_type"
+DIALOG_STEP = "u2tg_step"
 
 
 # ============ ДОБАВЛЕНИЕ ИСТОЧНИКА ============
 
 async def add_source_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    current_project = context.user_data.get(CURRENT_PROJECT_KEY)
-    context.user_data.clear()
-    if current_project:
-        context.user_data[CURRENT_PROJECT_KEY] = current_project
-    
-    telegram_id = update.effective_user.id
+    """Начало добавления источника YouTube."""
+    user_id = update.effective_user.id
     project = await require_project(update, context)
     
     if not project:
-        return ConversationHandler.END
+        return
     
-    has_access, message, user = await check_user_access(telegram_id)
+    has_access, message, user = await check_user_access(user_id)
     if not has_access:
         await update.message.reply_text(message)
-        return ConversationHandler.END
+        return
     
     can_add, limit_msg = await check_action_limit(user, "add_source", project_id=project.id)
     if not can_add and not user.is_admin:
         await update.message.reply_text(f"❌ {limit_msg}")
-        return ConversationHandler.END
+        return
     
     context.user_data['temp_project_id'] = project.id
     context.user_data['temp_project_name'] = project.name
     
     keyboard = [
-        [InlineKeyboardButton("📺 Канал", callback_data="youtube_type_channel")],
-        [InlineKeyboardButton("🔗 Ссылка на видео", callback_data="youtube_type_link")],
-        [InlineKeyboardButton("🔍 Поиск", callback_data="youtube_type_search")],
+        [InlineKeyboardButton("📺 Канал", callback_data="u2tg_type_channel")],
+        [InlineKeyboardButton("🔗 Ссылка на видео", callback_data="u2tg_type_link")],
+        [InlineKeyboardButton("🔍 Поиск", callback_data="u2tg_type_search")],
     ]
     
     await update.message.reply_text(
-        f"📥 Добавление источника в «{project.name}»\n\n"
-        f"Выберите тип источника YouTube:",
+        f"📥 Добавление источника в «{project.name}»\n\nВыберите тип:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
-    return AWAITING_YOUTUBE_SOURCE_TYPE
 
 
 async def youtube_source_type_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Выбор типа источника YouTube."""
     query = update.callback_query
     await query.answer()
     
-    choice = query.data.replace("youtube_type_", "")
-    context.user_data['youtube_source_type'] = choice
+    choice = query.data.replace("u2tg_type_", "")
+    context.user_data[DIALOG_SOURCE_TYPE] = choice
     
     if choice == "channel":
+        context.user_data[DIALOG_STEP] = "awaiting_channel_id"
         await query.edit_message_text(
             "📺 <b>Добавление канала YouTube</b>\n\n"
             "Отправьте ID канала, @username или ссылку:\n"
-            "• @channel\n"
-            "• https://youtube.com/@channel\n"
-            "• https://youtube.com/channel/UCxxxxx\n"
-            "• UCxxxxx\n\n"
-            "Пример: @durov или UCxxxxx",
+            "• @channel\n• https://youtube.com/@channel\n"
+            "• https://youtube.com/channel/UCxxxxx\n• UCxxxxx\n\n"
+            "Ответьте на это сообщение.",
             parse_mode="HTML"
         )
-        return AWAITING_YOUTUBE_CHANNEL_ID
     
     elif choice == "link":
+        context.user_data[DIALOG_STEP] = "awaiting_link"
         await query.edit_message_text(
             "🔗 <b>Добавление ссылки на видео</b>\n\n"
             "Отправьте ссылку на видео YouTube:\n"
             "• https://youtube.com/watch?v=xxxxx\n"
             "• https://youtu.be/xxxxx\n"
-            "• https://youtube.com/shorts/xxxxx",
+            "• https://youtube.com/shorts/xxxxx\n\n"
+            "Ответьте на это сообщение.",
             parse_mode="HTML"
         )
-        return AWAITING_YOUTUBE_LINK
     
     elif choice == "search":
+        context.user_data[DIALOG_STEP] = "awaiting_search_query"
         await query.edit_message_text(
             "🔍 <b>Поиск видео</b>\n\n"
             "Введите поисковый запрос:\n"
-            "Например: «как приготовить пиццу» или «нейросети 2026»",
+            "Например: «нейросети 2026»\n\n"
+            "Ответьте на это сообщение.",
             parse_mode="HTML"
         )
-        return AWAITING_YOUTUBE_SEARCH_QUERY
 
 
-async def youtube_channel_id_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    input_text = update.message.text.strip()
+async def handle_source_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает текстовый ввод для добавления источника (reply)."""
+    if not update.message or not update.message.reply_to_message:
+        return False  # Не reply — пусть другие обработчики работают
     
+    step = context.user_data.get(DIALOG_STEP)
+    source_type = context.user_data.get(DIALOG_SOURCE_TYPE)
+    
+    if not step or not source_type:
+        return False
+    
+    text = update.message.text.strip()
+    
+    if step == "awaiting_channel_id":
+        await process_channel_input(update, context, text)
+    elif step == "awaiting_link":
+        await process_link_input(update, context, text)
+    elif step == "awaiting_search_query":
+        await process_search_query_input(update, context, text)
+    elif step == "awaiting_criteria_views":
+        await process_criteria_views(update, context, text)
+    elif step == "awaiting_criteria_likes":
+        await process_criteria_likes(update, context, text)
+    elif step == "awaiting_keywords":
+        await process_keywords_input(update, context, text)
+    else:
+        return False
+    
+    return True  # Обработали
+
+
+async def process_channel_input(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
     async with YouTubeScraper() as scraper:
-        channel_id = scraper._extract_channel_id(input_text)
+        channel_id = scraper._extract_channel_id(text)
         if not channel_id:
-            await update.message.reply_text("❌ Не удалось распознать ID канала.")
-            return AWAITING_YOUTUBE_CHANNEL_ID
+            await update.message.reply_text("❌ Не удалось распознать ID канала. Попробуйте ещё раз.")
+            return
         
         info = await scraper.get_channel_info(channel_id)
         if not info:
             await update.message.reply_text("❌ Канал не найден.")
-            return AWAITING_YOUTUBE_CHANNEL_ID
+            return
     
     context.user_data['temp_source'] = {
         'name': info['title'],
@@ -162,37 +171,34 @@ async def youtube_channel_id_input(update: Update, context: ContextTypes.DEFAULT
         'project_name': context.user_data.get('temp_project_name')
     }
     
-    return await show_country_selection(update, context)
+    await show_country_selection(update, context)
 
 
-async def youtube_link_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    url = update.message.text.strip()
-    
+async def process_link_input(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
     async with YouTubeScraper() as scraper:
-        video = await scraper.get_video_by_url(url)
+        video = await scraper.get_video_by_url(text)
         if not video:
             await update.message.reply_text("❌ Не удалось найти видео по ссылке.")
-            return AWAITING_YOUTUBE_LINK
+            return
     
     context.user_data['temp_source'] = {
         'name': video['title'][:50],
         'source_type': 'link',
-        'youtube_link_url': url,
+        'youtube_link_url': text,
         'project_id': context.user_data.get('temp_project_id'),
         'project_name': context.user_data.get('temp_project_name')
     }
     
-    return await show_criteria_selection(update, context, video['title'][:50])
+    await show_criteria_selection(update, context, video['title'][:50])
 
 
-async def youtube_search_query_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query_text = update.message.text.strip()
-    if len(query_text) < 2:
+async def process_search_query_input(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
+    if len(text) < 2:
         await update.message.reply_text("❌ Запрос должен быть длиннее 2 символов.")
-        return AWAITING_YOUTUBE_SEARCH_QUERY
+        return
     
-    context.user_data['youtube_search_query'] = query_text
-    return await show_country_selection(update, context)
+    context.user_data['youtube_search_query'] = text
+    await show_country_selection(update, context)
 
 
 async def show_country_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -200,85 +206,78 @@ async def show_country_selection(update: Update, context: ContextTypes.DEFAULT_T
     row = []
     countries_list = list(COUNTRIES.items())
     for i, (code, name) in enumerate(countries_list):
-        row.append(InlineKeyboardButton(name, callback_data=f"country_{code}"))
+        row.append(InlineKeyboardButton(name, callback_data=f"u2tg_country_{code}"))
         if len(row) == 3:
             keyboard.append(row)
             row = []
     if row:
         keyboard.append(row)
-    keyboard.append([InlineKeyboardButton("🌍 Все страны", callback_data="country_all")])
+    keyboard.append([InlineKeyboardButton("🌍 Все страны", callback_data="u2tg_country_all")])
     
     msg = "🌍 <b>Выберите страну:</b>"
     if context.user_data.get('youtube_search_query'):
         msg += f"\nЗапрос: <code>{context.user_data['youtube_search_query']}</code>"
     
-    if update.callback_query:
-        await update.callback_query.edit_message_text(
-            msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
-        )
-    else:
-        await update.message.reply_text(
-            msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
-        )
-    return AWAITING_YOUTUBE_COUNTRY
+    context.user_data[DIALOG_STEP] = "selecting_country"
+    await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
 
 
 async def youtube_country_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    country = query.data.replace("country_", "")
+    country = query.data.replace("u2tg_country_", "")
     context.user_data['youtube_country'] = None if country == "all" else country
     
     keyboard = []
     row = []
     categories_list = list(CATEGORIES.items())
     for i, (cat_id, name) in enumerate(categories_list):
-        row.append(InlineKeyboardButton(name[:15], callback_data=f"category_{cat_id}"))
+        row.append(InlineKeyboardButton(name, callback_data=f"u2tg_category_{cat_id}"))
         if len(row) == 3:
             keyboard.append(row)
             row = []
     if row:
         keyboard.append(row)
-    keyboard.append([InlineKeyboardButton("📂 Все категории", callback_data="category_all")])
+    keyboard.append([InlineKeyboardButton("📂 Все категории", callback_data="u2tg_category_all")])
     
+    context.user_data[DIALOG_STEP] = "selecting_category"
     await query.edit_message_text(
         "📂 <b>Выберите категорию:</b>",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="HTML"
     )
-    return AWAITING_YOUTUBE_CATEGORY
 
 
 async def youtube_category_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    category = query.data.replace("category_", "")
+    category = query.data.replace("u2tg_category_", "")
     context.user_data['youtube_category'] = None if category == "all" else category
     
     keyboard = [
-        [InlineKeyboardButton("🎬 Все видео", callback_data="content_all")],
-        [InlineKeyboardButton("📱 Только шортсы", callback_data="content_shorts")],
-        [InlineKeyboardButton("📺 Обычные видео", callback_data="content_long")],
+        [InlineKeyboardButton("🎬 Все видео", callback_data="u2tg_content_all")],
+        [InlineKeyboardButton("📱 Только шортсы", callback_data="u2tg_content_shorts")],
+        [InlineKeyboardButton("📺 Обычные видео", callback_data="u2tg_content_long")],
     ]
     
+    context.user_data[DIALOG_STEP] = "selecting_content"
     await query.edit_message_text(
         "🎬 <b>Выберите тип контента:</b>",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="HTML"
     )
-    return AWAITING_YOUTUBE_CONTENT_TYPE
 
 
 async def youtube_content_type_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    content_type = query.data.replace("content_", "")
+    content_type = query.data.replace("u2tg_content_", "")
     context.user_data['youtube_content_type'] = content_type
     
-    source_type = context.user_data.get('youtube_source_type', 'channel')
+    source_type = context.user_data.get(DIALOG_SOURCE_TYPE, 'channel')
     
     if source_type == 'search':
         name = f"Поиск: {context.user_data.get('youtube_search_query', '')}"
@@ -289,6 +288,7 @@ async def youtube_content_type_callback(update: Update, context: ContextTypes.DE
         temp = context.user_data.get('temp_source', {})
         name = temp.get('name', 'Видео')
     
+    # Обновляем temp_source
     if source_type != 'link':
         context.user_data['temp_source'] = {
             'name': name,
@@ -303,49 +303,44 @@ async def youtube_content_type_callback(update: Update, context: ContextTypes.DE
             'project_name': context.user_data.get('temp_project_name')
         }
     
-    return await show_criteria_selection(update, context, name)
+    await show_criteria_selection(update, context, name)
 
 
 async def show_criteria_selection(update: Update, context: ContextTypes.DEFAULT_TYPE, source_name: str):
     keyboard = [
-        [InlineKeyboardButton("🎯 Свои критерии", callback_data="criteria_custom")],
-        [InlineKeyboardButton("👁 1000+ просмотров", callback_data="criteria_views")],
-        [InlineKeyboardButton("❤️ 50+ лайков", callback_data="criteria_likes")],
-        [InlineKeyboardButton("👁+❤️ 500+ и 25+", callback_data="criteria_both")],
-        [InlineKeyboardButton("⚡ Без критериев", callback_data="criteria_none")],
+        [InlineKeyboardButton("🎯 Свои критерии", callback_data="u2tg_criteria_custom")],
+        [InlineKeyboardButton("👁 1000+ просмотров", callback_data="u2tg_criteria_views")],
+        [InlineKeyboardButton("❤️ 50+ лайков", callback_data="u2tg_criteria_likes")],
+        [InlineKeyboardButton("👁+❤️ 500+ и 25+", callback_data="u2tg_criteria_both")],
+        [InlineKeyboardButton("⚡ Без критериев", callback_data="u2tg_criteria_none")],
     ]
     
-    msg = f"✅ Источник: {source_name}\n\nВыберите критерии отбора:"
-    
-    if update.callback_query:
-        await update.callback_query.edit_message_text(
-            msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
-        )
-    else:
-        await update.message.reply_text(
-            msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
-        )
-    return AWAITING_CRITERIA
+    context.user_data[DIALOG_STEP] = "selecting_criteria"
+    await update.message.reply_text(
+        f"✅ Источник: {source_name}\n\nВыберите критерии отбора:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="HTML"
+    )
 
 
 async def add_source_criteria(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    choice = query.data.replace("criteria_", "")
+    choice = query.data.replace("u2tg_criteria_", "")
     temp = context.user_data.get('temp_source')
     
     if not temp:
         await query.edit_message_text("❌ Ошибка: данные не найдены.")
-        return ConversationHandler.END
+        return
     
     if choice == "custom":
+        context.user_data[DIALOG_STEP] = "awaiting_criteria_views"
         await query.edit_message_text(
-            "📊 <b>Настройка критериев</b>\n\nВведите минимальное количество просмотров (0 = не учитывать):",
+            "📊 <b>Настройка критериев</b>\n\nВведите минимальное количество просмотров (0 = не учитывать):\n\nОтветьте на это сообщение.",
             parse_mode="HTML"
         )
-        context.user_data['awaiting_criteria'] = 'views'
-        return AWAITING_VIEWS
+        return
     
     criteria_map = {
         "views": {"min_views": 1000},
@@ -354,33 +349,32 @@ async def add_source_criteria(update: Update, context: ContextTypes.DEFAULT_TYPE
         "none": {}
     }
     criteria = criteria_map.get(choice, {})
-    
     context.user_data['temp_criteria'] = criteria
-    return await show_media_filters(query, context, temp)
+    await show_media_filters(update, context, temp)
 
 
-async def criteria_views_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def process_criteria_views(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
     try:
-        views = int(update.message.text.strip())
+        views = int(text)
         if views < 0:
             raise ValueError
     except:
         await update.message.reply_text("❌ Введите целое число (0 = не учитывать):")
-        return AWAITING_VIEWS
+        return
     
     context.user_data['temp_criteria_views'] = views
+    context.user_data[DIALOG_STEP] = "awaiting_criteria_likes"
     await update.message.reply_text("📊 Введите минимальное количество лайков (0 = не учитывать):")
-    return AWAITING_REACTIONS
 
 
-async def criteria_reactions_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def process_criteria_likes(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
     try:
-        likes = int(update.message.text.strip())
+        likes = int(text)
         if likes < 0:
             raise ValueError
     except:
         await update.message.reply_text("❌ Введите целое число (0 = не учитывать):")
-        return AWAITING_REACTIONS
+        return
     
     views = context.user_data.get('temp_criteria_views', 0)
     criteria = {}
@@ -391,89 +385,97 @@ async def criteria_reactions_input(update: Update, context: ContextTypes.DEFAULT
     
     context.user_data['temp_criteria'] = criteria
     temp = context.user_data.get('temp_source')
-    return await show_media_filters(update, context, temp)
+    await show_media_filters(update, context, temp)
 
 
-async def show_media_filters(target, context, temp):
+async def show_media_filters(update: Update, context: ContextTypes.DEFAULT_TYPE, temp):
     keyboard = [
-        [InlineKeyboardButton("📷 Все (шортсы + обычные)", callback_data="media_all")],
-        [InlineKeyboardButton("📱 Только шортсы", callback_data="media_shorts_only")],
-        [InlineKeyboardButton("📺 Только обычные", callback_data="media_long_only")],
+        [InlineKeyboardButton("📷 Все (шортсы + обычные)", callback_data="u2tg_media_all")],
+        [InlineKeyboardButton("📱 Только шортсы", callback_data="u2tg_media_shorts_only")],
+        [InlineKeyboardButton("📺 Только обычные", callback_data="u2tg_media_long_only")],
     ]
     
-    msg = f"✅ Критерии выбраны\n\nТеперь выберите тип контента для {temp['name']}:"
+    context.user_data[DIALOG_STEP] = "selecting_media"
     
-    if hasattr(target, 'edit_message_text'):
-        await target.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            f"✅ Критерии выбраны\n\nВыберите тип контента для {temp['name']}:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="HTML"
+        )
     else:
-        await target.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
-    
-    return AWAITING_MEDIA_FILTER
+        await update.message.reply_text(
+            f"✅ Критерии выбраны\n\nВыберите тип контента для {temp['name']}:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="HTML"
+        )
 
 
 async def media_filter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    choice = query.data.replace("media_", "")
+    choice = query.data.replace("u2tg_media_", "")
     context.user_data['temp_media_filter'] = choice
     
     if choice == "shorts_only":
         context.user_data['temp_max_video_duration'] = None
-        return await ask_remove_text(query, context)
+        await ask_remove_text(update, context)
+        return
     
     keyboard = [
-        [InlineKeyboardButton("📏 До 1 минуты", callback_data="duration_60")],
-        [InlineKeyboardButton("📏 До 3 минут", callback_data="duration_180")],
-        [InlineKeyboardButton("📏 До 5 минут", callback_data="duration_300")],
-        [InlineKeyboardButton("📏 До 10 минут", callback_data="duration_600")],
-        [InlineKeyboardButton("📏 Без ограничений", callback_data="duration_0")],
+        [InlineKeyboardButton("📏 До 1 минуты", callback_data="u2tg_duration_60")],
+        [InlineKeyboardButton("📏 До 3 минут", callback_data="u2tg_duration_180")],
+        [InlineKeyboardButton("📏 До 5 минут", callback_data="u2tg_duration_300")],
+        [InlineKeyboardButton("📏 До 10 минут", callback_data="u2tg_duration_600")],
+        [InlineKeyboardButton("📏 Без ограничений", callback_data="u2tg_duration_0")],
     ]
+    context.user_data[DIALOG_STEP] = "selecting_duration"
     await query.edit_message_text(
         "🎬 <b>Максимальная длительность видео:</b>",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="HTML"
     )
-    return AWAITING_MEDIA_FILTER
 
 
 async def duration_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    choice = query.data.replace("duration_", "")
+    choice = query.data.replace("u2tg_duration_", "")
     duration = int(choice)
     context.user_data['temp_max_video_duration'] = duration if duration > 0 else None
     
-    return await ask_remove_text(query, context)
+    await ask_remove_text(update, context)
 
 
-async def ask_remove_text(target, context):
+async def ask_remove_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
-        [InlineKeyboardButton("✅ Оставлять описание", callback_data="text_keep")],
-        [InlineKeyboardButton("❌ Удалять описание", callback_data="text_remove")],
+        [InlineKeyboardButton("✅ Оставлять описание", callback_data="u2tg_text_keep")],
+        [InlineKeyboardButton("❌ Удалять описание", callback_data="u2tg_text_remove")],
     ]
     
-    msg = (
-        f"📝 <b>Оригинальное описание видео:</b>\n\n"
-        f"Хотите оставлять или удалять описание из источника?\n"
-        f"Если удалить — останется только заголовок, медиа и подпись."
-    )
+    context.user_data[DIALOG_STEP] = "selecting_text"
     
-    if hasattr(target, 'edit_message_text'):
-        await target.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            "📝 <b>Оригинальное описание видео:</b>\n\nОставлять или удалять?",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="HTML"
+        )
     else:
-        await target.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
-    
-    context.user_data['awaiting_text_choice'] = True
-    return AWAITING_REMOVE_TEXT
+        await update.message.reply_text(
+            "📝 <b>Оригинальное описание видео:</b>\n\nОставлять или удалять?",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="HTML"
+        )
 
 
 async def remove_text_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    choice = query.data.replace("text_", "")
+    choice = query.data.replace("u2tg_text_", "")
     remove_text = (choice == "remove")
     
     temp = context.user_data.get('temp_source')
@@ -483,9 +485,10 @@ async def remove_text_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     
     if not temp:
         await query.edit_message_text("❌ Ошибка: данные не найдены.")
-        return ConversationHandler.END
+        return
     
     async with AsyncSessionLocal() as session:
+        # Проверка на дубликат
         if temp['source_type'] == 'channel':
             existing = await session.execute(
                 select(SourceChannel).where(
@@ -510,7 +513,7 @@ async def remove_text_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         
         if existing.scalar_one_or_none():
             await query.edit_message_text("⚠️ Такой источник уже добавлен в этот проект.")
-            return ConversationHandler.END
+            return
         
         channel = SourceChannel(
             project_id=temp['project_id'],
@@ -530,7 +533,7 @@ async def remove_text_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         session.add(channel)
         await session.commit()
-        context.user_data['temp_source_id'] = channel.id
+        source_id = channel.id
     
     filter_text = {"all": "все", "shorts_only": "только шортсы", "long_only": "только обычные"}.get(media_filter, "все")
     
@@ -550,93 +553,63 @@ async def remove_text_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     
     await query.edit_message_text("\n".join(text_parts))
     
+    # Ключевые слова
+    context.user_data['temp_source_id'] = source_id
+    context.user_data[DIALOG_STEP] = "awaiting_keywords"
+    
     keyboard = [
-        [InlineKeyboardButton("✅ Добавить ключевые слова", callback_data="add_keywords_yes")],
-        [InlineKeyboardButton("⏭️ Пропустить", callback_data="add_keywords_skip")]
+        [InlineKeyboardButton("⏭️ Пропустить", callback_data="u2tg_keywords_skip")]
     ]
     
     await query.message.reply_text(
-        f"🔍 <b>Ключевые слова для фильтрации</b>\n\n"
-        f"Вы можете указать ключевые слова (через запятую).\n"
-        f"Бот будет публиковать только видео, содержащие эти слова в заголовке или описании.\n\n"
-        f"<i>Видео старше 24 часов автоматически игнорируются.</i>",
+        "🔍 <b>Ключевые слова для фильтрации</b>\n\n"
+        "Введите слова через запятую или нажмите «Пропустить».\n"
+        "Ответьте на это сообщение.",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="HTML"
     )
-    return AWAITING_KEYWORDS
-
-
-async def add_keywords_yes_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text(
-        "🔍 <b>Введите ключевые слова</b>\n\n"
-        "Введите слова или фразы через запятую.\n"
-        "Пример: <code>искусственный интеллект, нейросети, ChatGPT</code>\n\n"
-        "Отправьте <code>-</code> чтобы пропустить.",
-        parse_mode="HTML"
-    )
-    return AWAITING_KEYWORDS
 
 
 async def add_keywords_skip_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    
-    project_id = context.user_data.get('temp_project_id')
-    project_name = context.user_data.get('temp_project_name')
-    
-    await query.edit_message_text("✅ Источник добавлен! Ключевые слова не указаны.")
-    
-    _clear_temp_data(context)
-    
-    sources_count = await get_sources_count(project_id)
-    target_channel = await get_project_target(project_id)
-    
-    if target_channel and sources_count >= 1:
-        await query.message.reply_text(
-            f"✅ <b>Проект «{project_name}» готов к работе!</b>\n\n"
-            f"• /set_interval — настроить частоту парсинга\n"
-            f"• /set_post_interval — интервал публикаций\n"
-            f"• /set_signature — добавить подпись\n"
-            f"• /parse — запустить парсинг\n"
-            f"• /add_source — добавить ещё источник",
-            parse_mode="HTML"
-        )
-    
-    return ConversationHandler.END
+    await finish_source_addition(update, context, None)
 
 
-def _clear_temp_data(context):
-    keys = ['temp_source_id', 'temp_source', 'temp_project_id', 'temp_project_name',
-            'temp_criteria', 'temp_criteria_views', 'temp_media_filter',
-            'temp_max_video_duration', 'youtube_source_type', 'youtube_search_query',
-            'youtube_country', 'youtube_category', 'youtube_content_type',
-            'awaiting_criteria', 'awaiting_text_choice', 'awaiting_duration']
-    for k in keys:
-        context.user_data.pop(k, None)
-
-
-async def process_keywords_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    source_id = context.user_data.get('temp_source_id')
-    project_id = context.user_data.get('temp_project_id')
-    project_name = context.user_data.get('temp_project_name')
+async def process_keywords_input(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str = None):
+    if text is None:
+        text = update.message.text.strip()
     
     keywords = None if text == "-" else text
-    reply = "✅ Источник добавлен! Ключевые слова не указаны." if text == "-" else f"✅ Источник добавлен!\n\n🔍 Ключевые слова: {keywords}"
     
-    async with AsyncSessionLocal() as session:
-        await session.execute(
-            sql_update(SourceChannel)
-            .where(SourceChannel.id == source_id)
-            .values(include_keywords=keywords)
-        )
-        await session.commit()
+    source_id = context.user_data.get('temp_source_id')
+    if source_id:
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                sql_update(SourceChannel)
+                .where(SourceChannel.id == source_id)
+                .values(include_keywords=keywords)
+            )
+            await session.commit()
     
-    await update.message.reply_text(reply)
+    await finish_source_addition(update, context, keywords)
+
+
+async def finish_source_addition(update: Update, context: ContextTypes.DEFAULT_TYPE, keywords):
+    project_name = context.user_data.get('temp_project_name', '')
+    project_id = context.user_data.get('temp_project_id')
     
-    _clear_temp_data(context)
+    if keywords:
+        reply = f"✅ Источник добавлен!\n🔍 Ключевые слова: {keywords}"
+    else:
+        reply = "✅ Источник добавлен! Ключевые слова не указаны."
+    
+    if update.callback_query:
+        await update.callback_query.edit_message_text(reply)
+    else:
+        await update.message.reply_text(reply)
+    
+    _clear_dialog(context)
     
     sources_count = await get_sources_count(project_id)
     target_channel = await get_project_target(project_id)
@@ -644,15 +617,21 @@ async def process_keywords_input(update: Update, context: ContextTypes.DEFAULT_T
     if target_channel and sources_count >= 1:
         await update.message.reply_text(
             f"✅ <b>Проект «{project_name}» готов к работе!</b>\n\n"
-            f"• /set_interval — настроить частоту парсинга\n"
+            f"• /set_interval — частота парсинга\n"
             f"• /set_post_interval — интервал публикаций\n"
-            f"• /set_signature — добавить подпись\n"
-            f"• /parse — запустить парсинг\n"
-            f"• /add_source — добавить ещё источник",
+            f"• /parse — запустить парсинг",
             parse_mode="HTML"
         )
-    
-    return ConversationHandler.END
+
+
+def _clear_dialog(context):
+    keys = ['temp_source_id', 'temp_source', 'temp_project_id', 'temp_project_name',
+            'temp_criteria', 'temp_criteria_views', 'temp_media_filter',
+            'temp_max_video_duration', 'youtube_search_query',
+            'youtube_country', 'youtube_category', 'youtube_content_type',
+            DIALOG_SOURCE_TYPE, DIALOG_STEP]
+    for k in keys:
+        context.user_data.pop(k, None)
 
 
 # ============ РЕДАКТИРОВАНИЕ ИСТОЧНИКА ============
@@ -690,21 +669,20 @@ async def show_edit_source_menu(query, source_id: int):
         f"✏️ <b>Редактирование {source.name}</b>\n\n"
         f"📊 Критерии: {criteria_str}\n"
         f"📷 Контент: {filter_names.get(source.media_filter, 'все')}\n"
-        f"🎬 Длительность видео: {'до ' + str(source.max_video_duration) + 'с' if source.max_video_duration else 'без ограничений'}\n"
+        f"🎬 Длительность: {'до ' + str(source.max_video_duration) + 'с' if source.max_video_duration else 'без ограничений'}\n"
         f"📝 Описание: {'удаляется' if source.remove_original_text else 'оставляется'}\n"
         f"🚫 Стоп-фразы: {source.exclude_phrases or 'нет'}\n"
         f"🔍 Ключевые слова: {source.include_keywords or 'не указаны'}\n"
-        f"⏰ Макс. возраст поста: {source.max_age_hours or 24} ч\n"
     )
     
     keyboard = [
-        [InlineKeyboardButton("📊 Изменить критерии", callback_data=f"edit_criteria_{source_id}")],
-        [InlineKeyboardButton("📷 Изменить тип контента", callback_data=f"edit_media_{source_id}")],
-        [InlineKeyboardButton("📝 Изменить обработку текста", callback_data=f"edit_text_{source_id}")],
-        [InlineKeyboardButton("🚫 Изменить стоп-фразы", callback_data=f"edit_phrases_{source_id}")],
-        [InlineKeyboardButton("🔍 Изменить ключевые слова", callback_data=f"edit_keywords_{source_id}")],
+        [InlineKeyboardButton("📊 Критерии", callback_data=f"edit_criteria_{source_id}")],
+        [InlineKeyboardButton("📷 Контент", callback_data=f"edit_media_{source_id}")],
+        [InlineKeyboardButton("📝 Описание", callback_data=f"edit_text_{source_id}")],
+        [InlineKeyboardButton("🚫 Стоп-фразы", callback_data=f"edit_phrases_{source_id}")],
+        [InlineKeyboardButton("🔍 Ключевые слова", callback_data=f"edit_keywords_{source_id}")],
         [InlineKeyboardButton("🗑️ Очистить стоп-фразы", callback_data=f"edit_clear_phrases_{source_id}")],
-        [InlineKeyboardButton("◀️ Назад к источникам", callback_data="back_to_sources")],
+        [InlineKeyboardButton("◀️ Назад", callback_data="back_to_sources")],
     ]
     
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
@@ -712,7 +690,6 @@ async def show_edit_source_menu(query, source_id: int):
 
 async def edit_source_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    logger.info(f"🔍 edit_source_start called with data: {query.data}")
     await query.answer()
     
     data = query.data
@@ -727,107 +704,51 @@ async def edit_source_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             await session.commit()
         await show_edit_source_menu(query, source_id)
-        return ConversationHandler.END
+        return
     
     source_id = int(data.split("_")[-1])
     context.user_data['edit_source_id'] = source_id
     
     if data.startswith("edit_criteria_"):
-        await query.edit_message_text("📊 Введите новые минимальные просмотры (0 = не учитывать):")
-        return AWAITING_EDIT_VIEWS
+        context.user_data[DIALOG_STEP] = "editing_views"
+        await query.edit_message_text("📊 Введите новые минимальные просмотры (0 = не учитывать):\n\nОтветьте на это сообщение.")
     
     elif data.startswith("edit_media_"):
         keyboard = [
             [InlineKeyboardButton("📷 Все", callback_data="edit_media_all")],
-            [InlineKeyboardButton("📱 Только шортсы", callback_data="edit_media_shorts_only")],
-            [InlineKeyboardButton("📺 Только обычные", callback_data="edit_media_long_only")],
+            [InlineKeyboardButton("📱 Шортсы", callback_data="edit_media_shorts_only")],
+            [InlineKeyboardButton("📺 Обычные", callback_data="edit_media_long_only")],
         ]
-        await query.edit_message_text("📷 Выберите новый тип контента:", reply_markup=InlineKeyboardMarkup(keyboard))
-        return AWAITING_MEDIA_FILTER
+        await query.edit_message_text("📷 Выберите тип контента:", reply_markup=InlineKeyboardMarkup(keyboard))
     
     elif data.startswith("edit_text_"):
         keyboard = [
-            [InlineKeyboardButton("✅ Оставлять описание", callback_data="edit_text_keep")],
-            [InlineKeyboardButton("❌ Удалять описание", callback_data="edit_text_remove")],
+            [InlineKeyboardButton("✅ Оставлять", callback_data="edit_text_keep")],
+            [InlineKeyboardButton("❌ Удалять", callback_data="edit_text_remove")],
         ]
-        await query.edit_message_text("📝 Оставлять или удалять описание из источника?", reply_markup=InlineKeyboardMarkup(keyboard))
-        return AWAITING_REMOVE_TEXT
+        await query.edit_message_text("📝 Оставлять или удалять описание?", reply_markup=InlineKeyboardMarkup(keyboard))
     
     elif data.startswith("edit_phrases_"):
         async with AsyncSessionLocal() as session:
             result = await session.execute(select(SourceChannel).where(SourceChannel.id == source_id))
             source = result.scalar_one()
         current = source.exclude_phrases or "нет"
+        context.user_data[DIALOG_STEP] = "editing_phrases"
         await query.edit_message_text(
-            f"🚫 <b>Стоп-фразы</b>\n\nТекущие: {current}\n\nВведите новые фразы через запятую.\nДля удаления всех фраз нажмите кнопку «Очистить».",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("🗑️ Очистить стоп-фразы", callback_data=f"edit_clear_phrases_{source_id}")
-            ]])
+            f"🚫 <b>Стоп-фразы</b>\n\nТекущие: {current}\n\nВведите новые фразы через запятую.\n\nОтветьте на это сообщение.",
+            parse_mode="HTML"
         )
-        return AWAITING_EDIT_EXCLUDE_PHRASES
     
     elif data.startswith("edit_keywords_"):
         async with AsyncSessionLocal() as session:
             result = await session.execute(select(SourceChannel).where(SourceChannel.id == source_id))
             source = result.scalar_one()
         current = source.include_keywords or "не указаны"
+        context.user_data[DIALOG_STEP] = "editing_keywords"
         await query.edit_message_text(
-            f"🔍 <b>Ключевые слова</b>\n\nТекущие: {current}\n\nВведите новые ключевые слова через запятую.\nОтправьте <code>-</code> чтобы очистить.",
+            f"🔍 <b>Ключевые слова</b>\n\nТекущие: {current}\n\nВведите новые слова через запятую.\n\nОтветьте на это сообщение.",
             parse_mode="HTML"
         )
-        return AWAITING_EDIT_KEYWORDS
-    
-    return ConversationHandler.END
-
-
-async def edit_views_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        views = int(update.message.text.strip())
-        if views < 0:
-            raise ValueError
-    except:
-        await update.message.reply_text("❌ Введите целое число (0 = не учитывать):")
-        return AWAITING_EDIT_VIEWS
-    
-    context.user_data['edit_views'] = views
-    await update.message.reply_text("📊 Введите новые минимальные лайки (0 = не учитывать):")
-    return AWAITING_EDIT_REACTIONS
-
-
-async def edit_reactions_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        likes = int(update.message.text.strip())
-        if likes < 0:
-            raise ValueError
-    except:
-        await update.message.reply_text("❌ Введите целое число (0 = не учитывать):")
-        return AWAITING_EDIT_REACTIONS
-    
-    views = context.user_data.get('edit_views', 0)
-    criteria = {}
-    if views > 0:
-        criteria['min_views'] = views
-    if likes > 0:
-        criteria['min_likes'] = likes
-    
-    source_id = context.user_data.get('edit_source_id')
-    
-    async with AsyncSessionLocal() as session:
-        await session.execute(
-            sql_update(SourceChannel)
-            .where(SourceChannel.id == source_id)
-            .values(criteria=criteria)
-        )
-        await session.commit()
-    
-    await update.message.reply_text("✅ Критерии обновлены!")
-    
-    await _edit_back_to_menu(update, context, source_id)
-    
-    context.user_data.pop('edit_views', None)
-    context.user_data.pop('edit_source_id', None)
-    return ConversationHandler.END
 
 
 async def edit_media_filter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -835,57 +756,18 @@ async def edit_media_filter_callback(update: Update, context: ContextTypes.DEFAU
     await query.answer()
     
     choice = query.data.replace("edit_media_", "")
-    context.user_data['edit_media_filter'] = choice
-    
-    if choice == "shorts_only":
-        source_id = context.user_data.get('edit_source_id')
-        async with AsyncSessionLocal() as session:
-            await session.execute(
-                sql_update(SourceChannel)
-                .where(SourceChannel.id == source_id)
-                .values(media_filter=choice, max_video_duration=None)
-            )
-            await session.commit()
-        await query.edit_message_text("✅ Тип контента обновлён: только шортсы")
-        await show_edit_source_menu(query, source_id)
-        context.user_data.pop('edit_source_id', None)
-        context.user_data.pop('edit_media_filter', None)
-        return ConversationHandler.END
-    
-    keyboard = [
-        [InlineKeyboardButton("📏 До 1 минуты", callback_data="edit_duration_60")],
-        [InlineKeyboardButton("📏 До 3 минут", callback_data="edit_duration_180")],
-        [InlineKeyboardButton("📏 Без ограничений", callback_data="edit_duration_0")],
-    ]
-    await query.edit_message_text("🎬 Максимальная длительность видео:", reply_markup=InlineKeyboardMarkup(keyboard))
-    return AWAITING_MEDIA_FILTER
-
-
-async def edit_duration_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    choice = query.data.replace("edit_duration_", "")
-    duration = int(choice) if int(choice) > 0 else None
-    media_filter = context.user_data.get('edit_media_filter', 'all')
     source_id = context.user_data.get('edit_source_id')
     
     async with AsyncSessionLocal() as session:
         await session.execute(
             sql_update(SourceChannel)
             .where(SourceChannel.id == source_id)
-            .values(media_filter=media_filter, max_video_duration=duration)
+            .values(media_filter=choice, max_video_duration=None if choice == "shorts_only" else None)
         )
         await session.commit()
     
-    dur_text = f"до {duration}с" if duration else "без ограничений"
-    filter_text = {"all": "все", "long_only": "только обычные"}.get(media_filter, media_filter)
-    await query.edit_message_text(f"✅ Обновлено: {filter_text}, {dur_text}")
+    await query.edit_message_text(f"✅ Тип контента обновлён")
     await show_edit_source_menu(query, source_id)
-    
-    context.user_data.pop('edit_source_id', None)
-    context.user_data.pop('edit_media_filter', None)
-    return ConversationHandler.END
 
 
 async def edit_remove_text_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -906,82 +788,127 @@ async def edit_remove_text_callback(update: Update, context: ContextTypes.DEFAUL
     
     await query.edit_message_text(f"✅ Описание: {'удаляется' if remove_text else 'оставляется'}")
     await show_edit_source_menu(query, source_id)
-    
-    context.user_data.pop('edit_source_id', None)
-    return ConversationHandler.END
+
+
+async def edit_views_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pass  # Заглушка для совместимости с bot.py
+
+
+async def edit_reactions_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pass  # Заглушка
+
+
+async def edit_duration_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pass  # Заглушка
 
 
 async def edit_exclude_phrases_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    new_phrases_text = update.message.text.strip()
-    source_id = context.user_data.get('edit_source_id')
-    
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(select(SourceChannel).where(SourceChannel.id == source_id))
-        source = result.scalar_one()
-        
-        current_phrases = source.exclude_phrases or ""
-        existing_phrases = [p.strip() for p in current_phrases.split(",") if p.strip()]
-        
-        if new_phrases_text and new_phrases_text != "-":
-            new_phrases = [p.strip() for p in new_phrases_text.split(",") if p.strip()]
-            for phrase in new_phrases:
-                if phrase not in existing_phrases:
-                    existing_phrases.append(phrase)
-        
-        updated_phrases = ", ".join(existing_phrases) if existing_phrases else None
-        
-        await session.execute(
-            sql_update(SourceChannel)
-            .where(SourceChannel.id == source_id)
-            .values(exclude_phrases=updated_phrases)
-        )
-        await session.commit()
-    
-    await update.message.reply_text(
-        f"✅ Стоп-фразы обновлены!\nТекущий список: {updated_phrases}" if updated_phrases else "✅ Все стоп-фразы удалены"
-    )
-    
-    await _edit_back_to_menu(update, context, source_id)
-    
-    context.user_data.pop('edit_source_id', None)
-    return ConversationHandler.END
+    pass  # Заглушка
 
 
 async def edit_keywords_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
+    pass  # Заглушка
+
+
+# ============ ОБРАБОТЧИК REPLY ДЛЯ РЕДАКТИРОВАНИЯ ============
+
+async def handle_edit_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает reply-сообщения для редактирования источников."""
+    if not update.message or not update.message.reply_to_message:
+        return False
+    
+    step = context.user_data.get(DIALOG_STEP)
     source_id = context.user_data.get('edit_source_id')
     
-    keywords = None if text == "-" else text
-    reply = "✅ Ключевые слова очищены" if text == "-" else f"✅ Ключевые слова обновлены: {keywords}"
+    if not step or not source_id:
+        return False
     
-    async with AsyncSessionLocal() as session:
-        await session.execute(
-            sql_update(SourceChannel)
-            .where(SourceChannel.id == source_id)
-            .values(include_keywords=keywords)
-        )
-        await session.commit()
+    text = update.message.text.strip()
     
-    await update.message.reply_text(reply)
+    if step == "editing_views":
+        try:
+            views = int(text)
+            if views < 0:
+                raise ValueError
+        except:
+            await update.message.reply_text("❌ Введите целое число.")
+            return True
+        
+        context.user_data['edit_views'] = views
+        context.user_data[DIALOG_STEP] = "editing_likes"
+        await update.message.reply_text("📊 Введите минимальные лайки:")
+        return True
     
-    await _edit_back_to_menu(update, context, source_id)
+    elif step == "editing_likes":
+        try:
+            likes = int(text)
+            if likes < 0:
+                raise ValueError
+        except:
+            await update.message.reply_text("❌ Введите целое число.")
+            return True
+        
+        views = context.user_data.get('edit_views', 0)
+        criteria = {}
+        if views > 0:
+            criteria['min_views'] = views
+        if likes > 0:
+            criteria['min_likes'] = likes
+        
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                sql_update(SourceChannel)
+                .where(SourceChannel.id == source_id)
+                .values(criteria=criteria)
+            )
+            await session.commit()
+        
+        context.user_data.pop(DIALOG_STEP, None)
+        context.user_data.pop('edit_views', None)
+        await update.message.reply_text("✅ Критерии обновлены!")
+        return True
     
-    context.user_data.pop('edit_source_id', None)
-    return ConversationHandler.END
-
-
-async def _edit_back_to_menu(update, context, source_id):
-    class FakeQuery:
-        def __init__(self, chat_id, message_id, bot):
-            self.message = type('obj', (object,), {'chat_id': chat_id, 'message_id': message_id})
-            self.bot = bot
-        async def edit_message_text(self, text, reply_markup=None, parse_mode=None):
-            await self.bot.edit_message_text(text=text, chat_id=self.message.chat_id, message_id=self.message.message_id, reply_markup=reply_markup, parse_mode=parse_mode)
-        async def answer(self):
-            pass
+    elif step == "editing_phrases":
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(SourceChannel).where(SourceChannel.id == source_id))
+            source = result.scalar_one()
+            current = source.exclude_phrases or ""
+            existing = [p.strip() for p in current.split(",") if p.strip()]
+            
+            if text and text != "-":
+                new_phrases = [p.strip() for p in text.split(",") if p.strip()]
+                for phrase in new_phrases:
+                    if phrase not in existing:
+                        existing.append(phrase)
+            
+            updated = ", ".join(existing) if existing else None
+            await session.execute(
+                sql_update(SourceChannel)
+                .where(SourceChannel.id == source_id)
+                .values(exclude_phrases=updated)
+            )
+            await session.commit()
+        
+        context.user_data.pop(DIALOG_STEP, None)
+        await update.message.reply_text(f"✅ Стоп-фразы обновлены!" if updated else "✅ Стоп-фразы удалены")
+        return True
     
-    fake_query = FakeQuery(update.message.chat_id, update.message.message_id - 1, context.bot)
-    await show_edit_source_menu(fake_query, source_id)
+    elif step == "editing_keywords":
+        keywords = None if text == "-" else text
+        
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                sql_update(SourceChannel)
+                .where(SourceChannel.id == source_id)
+                .values(include_keywords=keywords)
+            )
+            await session.commit()
+        
+        context.user_data.pop(DIALOG_STEP, None)
+        await update.message.reply_text(f"✅ Ключевые слова обновлены!" if keywords else "✅ Ключевые слова удалены")
+        return True
+    
+    return False
 
 
 # ============ СПИСОК ИСТОЧНИКОВ ============
@@ -1003,7 +930,7 @@ async def my_sources(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if not sources:
         text = f"📭 В проекте «{project.name}» нет источников.\nДобавьте: /add_source"
-        keyboard = [[InlineKeyboardButton("◀️ Назад к проекту", callback_data=f"project_menu_{project.id}")]]
+        keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data=f"project_menu_{project.id}")]]
         
         if update.callback_query:
             await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
@@ -1033,21 +960,16 @@ async def my_sources(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"   📷 {filter_names.get(src.media_filter, 'все')}"
         if src.max_video_duration:
             text += f" | 🎬 до {src.max_video_duration}с"
-        text += f" | 📝 {'без описания' if src.remove_original_text else 'с описанием'}"
-        if src.exclude_phrases:
-            text += f"\n   🚫 Стоп-фразы: {src.exclude_phrases}"
-        if src.include_keywords:
-            text += f"\n   🔍 Ключевые слова: {src.include_keywords}"
         if src.last_parsed:
             text += f"\n   🕐 {src.last_parsed.strftime('%d.%m.%Y %H:%M')}"
         text += "\n\n"
         
         keyboard.append([
-            InlineKeyboardButton(f"✏️ Ред. {src.name[:15]}", callback_data=f"edit_source_{src.id}"),
-            InlineKeyboardButton(f"❌ Удалить", callback_data=f"del_source_{src.id}")
+            InlineKeyboardButton(f"✏️ {src.name[:15]}", callback_data=f"edit_source_{src.id}"),
+            InlineKeyboardButton(f"❌", callback_data=f"del_source_{src.id}")
         ])
     
-    keyboard.append([InlineKeyboardButton("◀️ Назад к проекту", callback_data=f"project_menu_{project.id}")])
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data=f"project_menu_{project.id}")])
     
     if update.callback_query:
         await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
@@ -1070,15 +992,14 @@ async def delete_source_callback(update: Update, context: ContextTypes.DEFAULT_T
         source_name = source.name if source else "этот источник"
     
     keyboard = [
-        [InlineKeyboardButton("✅ Да, удалить", callback_data="confirm_delete_source"),
-         InlineKeyboardButton("❌ Отмена", callback_data="cancel_delete_source")]
+        [InlineKeyboardButton("✅ Да", callback_data="confirm_delete_source"),
+         InlineKeyboardButton("❌ Нет", callback_data="cancel_delete_source")]
     ]
     
     await query.message.reply_text(
-        f"⚠️ Удалить источник {source_name}?\n\nПосты из этого источника больше не будут парситься.",
+        f"⚠️ Удалить источник {source_name}?",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
-    await query.delete_message()
 
 
 async def confirm_delete_source_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1087,7 +1008,7 @@ async def confirm_delete_source_callback(update: Update, context: ContextTypes.D
     
     source_id = context.user_data.get('delete_source_id')
     if not source_id:
-        await query.edit_message_text("❌ Ошибка: источник не найден")
+        await query.edit_message_text("❌ Ошибка")
         return
     
     async with AsyncSessionLocal() as session:
@@ -1103,7 +1024,7 @@ async def cancel_delete_source_callback(update: Update, context: ContextTypes.DE
     query = update.callback_query
     await query.answer()
     context.user_data.pop('delete_source_id', None)
-    await query.edit_message_text("❌ Удаление отменено")
+    await query.edit_message_text("❌ Отмена")
     await my_sources(update, context)
 
 
