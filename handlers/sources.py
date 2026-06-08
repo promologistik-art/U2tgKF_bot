@@ -290,11 +290,20 @@ async def show_criteria_selection(update: Update, context: ContextTypes.DEFAULT_
     ]
 
     context.user_data[DIALOG_STEP] = "selecting_criteria"
-    await update.message.reply_text(
-        f"✅ Источник: {source_name}\n\nВыберите критерии отбора:",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="HTML"
-    )
+
+    # Определяем, откуда пришёл вызов
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            f"✅ Источник: {source_name}\n\nВыберите критерии отбора:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="HTML"
+        )
+    else:
+        await update.message.reply_text(
+            f"✅ Источник: {source_name}\n\nВыберите критерии отбора:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="HTML"
+        )
 
 
 async def add_source_criteria(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -369,11 +378,19 @@ async def show_media_filters(update: Update, context: ContextTypes.DEFAULT_TYPE,
     ]
 
     context.user_data[DIALOG_STEP] = "selecting_media"
-    await update.message.reply_text(
-        f"✅ Критерии выбраны\n\nВыберите тип контента для {temp['name']}:",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="HTML"
-    )
+
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            f"✅ Критерии выбраны\n\nВыберите тип контента для {temp['name']}:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="HTML"
+        )
+    else:
+        await update.message.reply_text(
+            f"✅ Критерии выбраны\n\nВыберите тип контента для {temp['name']}:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="HTML"
+        )
 
 
 async def media_filter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
