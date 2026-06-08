@@ -157,7 +157,6 @@ async def process_channel_input(update: Update, context: ContextTypes.DEFAULT_TY
         'project_name': context.user_data.get('temp_project_name')
     }
 
-    # Для канала сразу показываем критерии (без выбора страны)
     await show_criteria_selection(update, context, info['title'])
 
 
@@ -176,7 +175,6 @@ async def process_link_input(update: Update, context: ContextTypes.DEFAULT_TYPE,
         'project_name': context.user_data.get('temp_project_name')
     }
 
-    # Для ссылки тоже сразу критерии (можно позже добавить выбор режима)
     await show_criteria_selection(update, context, video['title'][:50])
 
 
@@ -403,7 +401,7 @@ async def media_filter_callback(update: Update, context: ContextTypes.DEFAULT_TY
     if choice == "shorts_only":
         context.user_data['temp_max_video_duration'] = None
         await ask_download_mode(update, context)
-        return
+        return  # <--- ВАЖНО: выход из функции
 
     keyboard = [
         [InlineKeyboardButton("📏 До 1 минуты", callback_data="u2tg_duration_60")],
@@ -429,6 +427,7 @@ async def duration_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['temp_max_video_duration'] = duration if duration > 0 else None
 
     await ask_download_mode(update, context)
+    return  # <--- ВАЖНО: выход из функции
 
 
 async def ask_download_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -438,11 +437,20 @@ async def ask_download_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
 
     context.user_data[DIALOG_STEP] = "selecting_download"
-    await update.message.reply_text(
-        "📥 <b>Режим скачивания:</b>\n\nВыберите, как загружать видео:",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="HTML"
-    )
+
+    # Определяем, откуда пришёл вызов
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            "📥 <b>Режим скачивания:</b>\n\nВыберите, как загружать видео:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="HTML"
+        )
+    else:
+        await update.message.reply_text(
+            "📥 <b>Режим скачивания:</b>\n\nВыберите, как загружать видео:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="HTML"
+        )
 
 
 async def download_mode_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -462,11 +470,19 @@ async def ask_remove_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
 
     context.user_data[DIALOG_STEP] = "selecting_text"
-    await update.message.reply_text(
-        "📝 <b>Оригинальное описание видео:</b>\n\nОставлять или удалять?",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="HTML"
-    )
+
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            "📝 <b>Оригинальное описание видео:</b>\n\nОставлять или удалять?",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="HTML"
+        )
+    else:
+        await update.message.reply_text(
+            "📝 <b>Оригинальное описание видео:</b>\n\nОставлять или удалять?",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="HTML"
+        )
 
 
 async def remove_text_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
