@@ -235,7 +235,7 @@ async def main():
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
-        per_message=True
+        per_message=False
     )
     
     edit_source_conv = ConversationHandler(
@@ -378,7 +378,7 @@ async def main():
     app.add_handler(set_signature_conv)
     app.add_handler(broadcast_conv)
     
-    # app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_project_name))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_project_name))
     
     await app.initialize()
     await app.start()
