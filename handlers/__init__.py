@@ -12,6 +12,7 @@ from .sources import (
     add_source_criteria,
     media_filter_callback,
     duration_callback,
+    download_mode_callback,
     remove_text_callback,
     add_keywords_skip_callback,
     handle_source_input,
@@ -22,6 +23,7 @@ from .sources import (
     edit_source_start,
     edit_media_filter_callback,
     edit_remove_text_callback,
+    edit_download_mode_callback,
     edit_views_input, edit_reactions_input,
     edit_duration_callback, edit_exclude_phrases_input, edit_keywords_input
 )
