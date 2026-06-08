@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 YouTube Content Bot — U2TG
-Version: 1.1.0 (02.06.2026) — PostgreSQL + KontentFabrik integration
+Version: 1.2.0 (08.06.2026) — Reply-based source addition
 """
 
 import asyncio
@@ -9,7 +9,7 @@ import logging
 import sys
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
-    MessageHandler, filters, ConversationHandler
+    MessageHandler, filters
 )
 
 from config import Config
@@ -21,21 +21,22 @@ from handlers import (
     back_to_projects_callback,
     add_source_start,
     youtube_source_type_callback,
-    youtube_channel_id_input,
-    youtube_link_input,
-    youtube_search_query_input,
     youtube_country_callback,
     youtube_category_callback,
     youtube_content_type_callback,
+    add_source_criteria,
+    media_filter_callback,
+    duration_callback,
+    remove_text_callback,
+    add_keywords_skip_callback,
+    handle_source_input,
+    handle_edit_reply,
     my_sources, edit_source_callback, delete_source_callback,
     confirm_delete_source_callback, cancel_delete_source_callback,
     back_to_sources_callback,
-    add_keywords_yes_callback, add_keywords_skip_callback, process_keywords_input,
-    criteria_views_input, criteria_reactions_input,
-    media_filter_callback, duration_callback, remove_text_callback,
-    edit_source_start, edit_views_input, edit_reactions_input,
-    edit_media_filter_callback, edit_duration_callback, edit_remove_text_callback,
-    edit_exclude_phrases_input, edit_keywords_input,
+    edit_source_start,
+    edit_media_filter_callback,
+    edit_remove_text_callback,
     add_target_start, add_target_forward, add_target_continue_callback,
     my_targets, delete_target_callback,
     set_interval_start, set_interval_callback,
@@ -52,16 +53,7 @@ from handlers import (
     admin_set_tariff_start, admin_extend_trial_start,
     broadcast_start, broadcast_send,
     test_scraper, debug_reactions,
-    setup_bot_commands,
-    AWAITING_SOURCE_USERNAME, AWAITING_TARGET_FORWARD, AWAITING_CRITERIA,
-    AWAITING_INTERVAL, AWAITING_VIEWS, AWAITING_REACTIONS, AWAITING_SIGNATURE,
-    AWAITING_POST_INTERVAL, AWAITING_POST_START_TIME,
-    AWAITING_MEDIA_FILTER, AWAITING_REMOVE_TEXT,
-    AWAITING_EDIT_VIEWS, AWAITING_EDIT_REACTIONS, AWAITING_EDIT_EXCLUDE_PHRASES,
-    AWAITING_BROADCAST_MESSAGE, AWAITING_KEYWORDS, AWAITING_EDIT_KEYWORDS,
-    AWAITING_YOUTUBE_SOURCE_TYPE, AWAITING_YOUTUBE_CHANNEL_ID,
-    AWAITING_YOUTUBE_LINK, AWAITING_YOUTUBE_SEARCH_QUERY,
-    AWAITING_YOUTUBE_COUNTRY, AWAITING_YOUTUBE_CATEGORY, AWAITING_YOUTUBE_CONTENT_TYPE
+    setup_bot_commands
 )
 
 from posters import TelegramPoster
@@ -130,261 +122,64 @@ async def main():
     app.add_handler(CommandHandler("admin_set_tariff", admin_set_tariff_start))
     app.add_handler(CommandHandler("admin_extend_trial", admin_extend_trial_start))
     app.add_handler(CommandHandler("cancel", cancel))
+    app.add_handler(CommandHandler("add_source", add_source_start))
+    app.add_handler(CommandHandler("add_target", add_target_start))
+    app.add_handler(CommandHandler("set_interval", set_interval_start))
+    app.add_handler(CommandHandler("set_post_interval", set_post_interval_start))
+    app.add_handler(CommandHandler("set_signature", set_signature_start))
+    app.add_handler(CommandHandler("broadcast", broadcast_start))
     
     # ============ CallbackQueryHandlers ============
     app.add_handler(CallbackQueryHandler(admin_back_callback, pattern="^admin_back$"))
     app.add_handler(CallbackQueryHandler(admin_callback, pattern="^(admin_|user_manage_|tariff_set_|user_tariff_|extend_user_|deactivate_user_|activate_user_|tariff_for_|set_tariff_|admin_set_tariff|admin_extend_trial|admin_deactivate|admin_activate)"))
     
+    # U2TG source addition callbacks
+    app.add_handler(CallbackQueryHandler(youtube_source_type_callback, pattern="^u2tg_type_"))
+    app.add_handler(CallbackQueryHandler(youtube_country_callback, pattern="^u2tg_country_"))
+    app.add_handler(CallbackQueryHandler(youtube_category_callback, pattern="^u2tg_category_"))
+    app.add_handler(CallbackQueryHandler(youtube_content_type_callback, pattern="^u2tg_content_"))
+    app.add_handler(CallbackQueryHandler(add_source_criteria, pattern="^u2tg_criteria_"))
+    app.add_handler(CallbackQueryHandler(media_filter_callback, pattern="^u2tg_media_"))
+    app.add_handler(CallbackQueryHandler(duration_callback, pattern="^u2tg_duration_"))
+    app.add_handler(CallbackQueryHandler(remove_text_callback, pattern="^u2tg_text_"))
+    app.add_handler(CallbackQueryHandler(add_keywords_skip_callback, pattern="^u2tg_keywords_skip"))
+    
+    # Source management
     app.add_handler(CallbackQueryHandler(edit_source_callback, pattern="^edit_source_"))
     app.add_handler(CallbackQueryHandler(delete_source_callback, pattern="^del_source_"))
     app.add_handler(CallbackQueryHandler(confirm_delete_source_callback, pattern="^confirm_delete_source$"))
     app.add_handler(CallbackQueryHandler(cancel_delete_source_callback, pattern="^cancel_delete_source$"))
-    app.add_handler(CallbackQueryHandler(add_keywords_yes_callback, pattern="^add_keywords_yes$"))
-    app.add_handler(CallbackQueryHandler(add_keywords_skip_callback, pattern="^add_keywords_skip$"))
     app.add_handler(CallbackQueryHandler(back_to_sources_callback, pattern="^back_to_sources$"))
-    
-    app.add_handler(CallbackQueryHandler(youtube_source_type_callback, pattern="^youtube_type_"))
-    app.add_handler(CallbackQueryHandler(youtube_country_callback, pattern="^country_"))
-    app.add_handler(CallbackQueryHandler(youtube_category_callback, pattern="^category_"))
-    app.add_handler(CallbackQueryHandler(youtube_content_type_callback, pattern="^content_"))
+    app.add_handler(CallbackQueryHandler(edit_source_start, pattern="^edit_(criteria|media|text|phrases|clear_phrases|keywords)_"))
+    app.add_handler(CallbackQueryHandler(edit_media_filter_callback, pattern="^edit_media_"))
+    app.add_handler(CallbackQueryHandler(edit_remove_text_callback, pattern="^edit_text_"))
     
     app.add_handler(CallbackQueryHandler(delete_target_callback, pattern="^del_target_"))
-    
     app.add_handler(CallbackQueryHandler(project_menu_callback, pattern="^project_menu_"))
     app.add_handler(CallbackQueryHandler(back_to_projects_callback, pattern="^back_to_projects$"))
     app.add_handler(CallbackQueryHandler(projects_callback, pattern="^(create_project|select_project_|delete_project_|confirm_delete_|cancel_delete|stats_project_|project_sources_|project_change_target_)"))
+    app.add_handler(CallbackQueryHandler(set_interval_start_callback, pattern="^project_set_check_"))
+    app.add_handler(CallbackQueryHandler(set_post_interval_start_callback, pattern="^project_set_post_"))
+    app.add_handler(CallbackQueryHandler(set_signature_start_callback, pattern="^project_set_signature_"))
+    app.add_handler(CallbackQueryHandler(add_target_continue_callback, pattern="^add_target_continue$"))
+    app.add_handler(CallbackQueryHandler(set_interval_callback, pattern="^interval_"))
+    app.add_handler(CallbackQueryHandler(set_post_interval_callback, pattern="^post_"))
+    app.add_handler(CallbackQueryHandler(set_post_start_time_callback, pattern="^starttime_"))
     
-    # ============ ConversationHandlers ============
-    add_source_conv = ConversationHandler(
-        entry_points=[CommandHandler("add_source", add_source_start)],
-        states={
-            AWAITING_YOUTUBE_SOURCE_TYPE: [
-                CallbackQueryHandler(youtube_source_type_callback, pattern="^youtube_type_"),
-                CommandHandler("start", start),
-                CommandHandler("help", help_command),
-                CommandHandler("cancel", cancel),
-            ],
-            AWAITING_YOUTUBE_CHANNEL_ID: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, youtube_channel_id_input),
-                CommandHandler("start", start),
-                CommandHandler("help", help_command),
-                CommandHandler("cancel", cancel),
-            ],
-            AWAITING_YOUTUBE_LINK: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, youtube_link_input),
-                CommandHandler("start", start),
-                CommandHandler("help", help_command),
-                CommandHandler("cancel", cancel),
-            ],
-            AWAITING_YOUTUBE_SEARCH_QUERY: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, youtube_search_query_input),
-                CommandHandler("start", start),
-                CommandHandler("help", help_command),
-                CommandHandler("cancel", cancel),
-            ],
-            AWAITING_YOUTUBE_COUNTRY: [
-                CallbackQueryHandler(youtube_country_callback, pattern="^country_"),
-                CommandHandler("start", start),
-                CommandHandler("help", help_command),
-                CommandHandler("cancel", cancel),
-            ],
-            AWAITING_YOUTUBE_CATEGORY: [
-                CallbackQueryHandler(youtube_category_callback, pattern="^category_"),
-                CommandHandler("start", start),
-                CommandHandler("help", help_command),
-                CommandHandler("cancel", cancel),
-            ],
-            AWAITING_YOUTUBE_CONTENT_TYPE: [
-                CallbackQueryHandler(youtube_content_type_callback, pattern="^content_"),
-                CommandHandler("start", start),
-                CommandHandler("help", help_command),
-                CommandHandler("cancel", cancel),
-            ],
-            AWAITING_VIEWS: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, criteria_views_input),
-                CommandHandler("start", start),
-                CommandHandler("help", help_command),
-                CommandHandler("cancel", cancel),
-            ],
-            AWAITING_REACTIONS: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, criteria_reactions_input),
-                CommandHandler("start", start),
-                CommandHandler("help", help_command),
-                CommandHandler("cancel", cancel),
-            ],
-            AWAITING_MEDIA_FILTER: [
-                CallbackQueryHandler(media_filter_callback, pattern="^media_"),
-                CallbackQueryHandler(duration_callback, pattern="^duration_"),
-                CommandHandler("start", start),
-                CommandHandler("help", help_command),
-                CommandHandler("cancel", cancel),
-            ],
-            AWAITING_REMOVE_TEXT: [
-                CallbackQueryHandler(remove_text_callback, pattern="^text_"),
-                CommandHandler("start", start),
-                CommandHandler("help", help_command),
-                CommandHandler("cancel", cancel),
-            ],
-            AWAITING_KEYWORDS: [
-                CallbackQueryHandler(add_keywords_yes_callback, pattern="^add_keywords_yes$"),
-                CallbackQueryHandler(add_keywords_skip_callback, pattern="^add_keywords_skip$"),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, process_keywords_input),
-                CommandHandler("start", start),
-                CommandHandler("help", help_command),
-                CommandHandler("cancel", cancel),
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-        per_message=False
-    )
-    
-    edit_source_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(edit_source_start, pattern="^edit_(criteria|media|text|phrases|clear_phrases|keywords)_")],
-        states={
-            AWAITING_EDIT_VIEWS: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_views_input),
-                CommandHandler("start", start),
-                CommandHandler("help", help_command),
-                CommandHandler("cancel", cancel),
-            ],
-            AWAITING_EDIT_REACTIONS: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_reactions_input),
-                CommandHandler("start", start),
-                CommandHandler("help", help_command),
-                CommandHandler("cancel", cancel),
-            ],
-            AWAITING_MEDIA_FILTER: [
-                CallbackQueryHandler(edit_media_filter_callback, pattern="^edit_media_"),
-                CommandHandler("start", start),
-                CommandHandler("help", help_command),
-                CommandHandler("cancel", cancel),
-            ],
-            AWAITING_REMOVE_TEXT: [
-                CallbackQueryHandler(edit_remove_text_callback, pattern="^edit_text_"),
-                CommandHandler("start", start),
-                CommandHandler("help", help_command),
-                CommandHandler("cancel", cancel),
-            ],
-            AWAITING_EDIT_EXCLUDE_PHRASES: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_exclude_phrases_input),
-                CommandHandler("start", start),
-                CommandHandler("help", help_command),
-                CommandHandler("cancel", cancel),
-            ],
-            AWAITING_EDIT_KEYWORDS: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_keywords_input),
-                CommandHandler("start", start),
-                CommandHandler("help", help_command),
-                CommandHandler("cancel", cancel),
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-        per_message=False
-    )
-    
-    add_target_conv = ConversationHandler(
-        entry_points=[
-            CommandHandler("add_target", add_target_start),
-            CallbackQueryHandler(add_target_continue_callback, pattern="^add_target_continue$")
-        ],
-        states={
-            AWAITING_TARGET_FORWARD: [
-                MessageHandler(filters.FORWARDED, add_target_forward),
-                CommandHandler("start", start),
-                CommandHandler("help", help_command),
-                CommandHandler("cancel", cancel),
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-        per_message=False
-    )
-    
-    set_interval_conv = ConversationHandler(
-        entry_points=[
-            CommandHandler("set_interval", set_interval_start),
-            CallbackQueryHandler(set_interval_start_callback, pattern="^project_set_check_")
-        ],
-        states={
-            AWAITING_INTERVAL: [
-                CallbackQueryHandler(set_interval_callback, pattern="^interval_"),
-                CommandHandler("start", start),
-                CommandHandler("help", help_command),
-                CommandHandler("cancel", cancel),
-            ]
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-        per_message=False
-    )
-    
-    set_post_interval_conv = ConversationHandler(
-        entry_points=[
-            CommandHandler("set_post_interval", set_post_interval_start),
-            CallbackQueryHandler(set_post_interval_start_callback, pattern="^project_set_post_")
-        ],
-        states={
-            AWAITING_POST_INTERVAL: [
-                CallbackQueryHandler(set_post_interval_callback, pattern="^post_"),
-                CommandHandler("start", start),
-                CommandHandler("help", help_command),
-                CommandHandler("cancel", cancel),
-            ],
-            AWAITING_POST_START_TIME: [
-                CallbackQueryHandler(set_post_start_time_callback, pattern="^starttime_"),
-                CommandHandler("start", start),
-                CommandHandler("help", help_command),
-                CommandHandler("cancel", cancel),
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-        per_message=False
-    )
-    
-    set_signature_conv = ConversationHandler(
-        entry_points=[
-            CommandHandler("set_signature", set_signature_start),
-            CallbackQueryHandler(set_signature_start_callback, pattern="^project_set_signature_")
-        ],
-        states={
-            AWAITING_SIGNATURE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, set_signature_input),
-                CommandHandler("start", start),
-                CommandHandler("help", help_command),
-                CommandHandler("cancel", cancel),
-            ]
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-        per_message=False
-    )
-    
-    broadcast_conv = ConversationHandler(
-        entry_points=[CommandHandler("broadcast", broadcast_start)],
-        states={
-            AWAITING_BROADCAST_MESSAGE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_send),
-                CommandHandler("start", start),
-                CommandHandler("help", help_command),
-                CommandHandler("cancel", cancel),
-            ]
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-        per_message=False
-    )
-    
-    app.add_handler(add_source_conv)
-    app.add_handler(edit_source_conv)
-    app.add_handler(add_target_conv)
-    app.add_handler(set_interval_conv)
-    app.add_handler(set_post_interval_conv)
-    app.add_handler(set_signature_conv)
-    app.add_handler(broadcast_conv)
-    
+    # ============ Message Handlers ============
+    # Reply handler для добавления/редактирования источников (должен быть первым)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.REPLY, handle_source_input))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.REPLY, handle_edit_reply))
+    # Обработчик названия проекта
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_project_name))
+    # Пересланные сообщения для add_target
+    app.add_handler(MessageHandler(filters.FORWARDED, add_target_forward))
     
     await app.initialize()
     await app.start()
     await app.updater.start_polling(allowed_updates=["message", "callback_query"])
     
-    logger.info("🟢 U2TG started (version 1.1.0)")
+    logger.info("🟢 U2TG started (version 1.2.0)")
     
     try:
         await asyncio.Event().wait()
