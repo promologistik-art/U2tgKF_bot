@@ -681,7 +681,7 @@ async def show_edit_source_menu(query, source_id: int):
             criteria_parts.append(f"❤️ ≥{source.criteria['min_likes']}")
     criteria_str = ", ".join(criteria_parts) if criteria_parts else "без критериев"
 
-    dl_mode_text = {'preview': '📷', 'full_shorts': '🎬'}.get(source.download_mode, '📷')
+    dl_mode_text = {'preview': '📷', 'full_shorts': '🎬'}.get(getattr(source, 'download_mode', 'preview'), '📷')
 
     text = (
         f"✏️ <b>Редактирование {source.name}</b>\n\n"
@@ -929,7 +929,7 @@ async def my_sources(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if "min_likes" in src.criteria:
                 criteria_parts.append(f"❤️ ≥{src.criteria['min_likes']}")
         criteria_str = ", ".join(criteria_parts) if criteria_parts else "без критериев"
-        dl_mode_text = {'preview': '📷', 'full_shorts': '🎬'}.get(src.download_mode, '📷')
+        dl_mode_text = {'preview': '📷', 'full_shorts': '🎬'}.get(getattr(src, 'download_mode', 'preview'), '📷')
         status_icon = "✅" if src.is_active else "❌"
         text += f"{status_icon} {dl_mode_text} {type_icon} <b>{src.name}</b>\n"
         text += f"   📊 {criteria_str}\n"
