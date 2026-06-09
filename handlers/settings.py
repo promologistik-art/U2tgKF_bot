@@ -1078,3 +1078,40 @@ async def set_signature_input(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.user_data.pop('temp_project_id', None)
     
     return ConversationHandler.END
+
+
+# ============ ENTRY POINTS ДЛЯ МЕНЮ ПРОЕКТА (для кнопок) ============
+
+async def set_signature_start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    project_id = int(query.data.replace("project_set_signature_", ""))
+    context.user_data['temp_project_id'] = project_id
+    
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(Project).where(Project.id == project_id))
+        project = result.scalar_one()
+    
+    current = project.signature or "не установлена"
+    current_display = get_display_text(current) if current != "не установлена" else current
+    
+    await query.edit_message_text(
+        f"✍️ <b>Подпись проекта «{project.name}»</b>\n\n"
+        f"<b>Текущая подпись:</b> {current_display}\n\n"
+        f"<b>Введите подпись:</b>\n\n"
+        f"📝 <b>Просто текст:</b>\n"
+        f"   <code>Мой канал</code>\n\n"
+        f"🔗 <b>Текст + ссылка (через | ):</b>\n"
+        f"   <code>Мой канал | https://t.me/username</code>\n\n"
+        f"🔗 <b>Текст со ссылкой или @username:</b>\n"
+        f"   <code>Сделано в https://t.me/username</code>\n"
+        f"   <code>Сделано в @username</code>\n"
+        f"   <i>Бот сам сделает ссылку кликабельной</i>\n\n"
+        f"🔗 <b>Только ссылка:</b>\n"
+        f"   <code>https://t.me/username</code>\n\n"
+        f"Отправьте <code>удалить</code> чтобы убрать подпись.\n"
+        f"/cancel — отмена",
+        parse_mode="HTML"
+    )
+    return ConversationHandler.END
