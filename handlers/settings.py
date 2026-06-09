@@ -704,85 +704,16 @@ async def set_post_start_time_callback(update: Update, context: ContextTypes.DEF
 
 # ============ НАСТРОЙКА ПОДПИСИ ============
 
-def extract_username_from_link(link: str) -> str:
-    patterns = [
-        r'(?:https?://)?t\.me/([a-zA-Z0-9_]+)',
-        r'@([a-zA-Z0-9_]+)'
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, link)
-        if match:
-            return match.group(1)
-    return None
-
-
-def parse_signature_input(text: str) -> str:
-    text = text.strip()
-    
-    if "|" in text:
-        parts = text.split("|", 1)
-        label = parts[0].strip()
-        link = parts[1].strip()
-        if link:
-            if not link.startswith("http"):
-                link = "https://" + link
-            username = extract_username_from_link(link)
-            if username:
-                if f"@{username}" not in label:
-                    label = f"{label} @{username}"
-            return f'<a href="{link}">{label}</a>'
-    
-    def replace_link(match):
-        full_link = match.group(0)
-        username = extract_username_from_link(full_link)
-        if username:
-            return f'<a href="{full_link}">@{username}</a>'
-        return full_link
-    
-    link_pattern = r'(?:https?://)?t\.me/[a-zA-Z0-9_]+'
-    if re.search(link_pattern, text):
-        text = re.sub(link_pattern, replace_link, text)
-        return text
-    
-    username_pattern = r'@([a-zA-Z0-9_]+)'
-    if re.search(username_pattern, text):
-        def make_username_clickable(match):
-            username = match.group(1)
-            link = f"https://t.me/{username}"
-            return f'<a href="{link}">@{username}</a>'
-        text = re.sub(username_pattern, make_username_clickable, text)
-        return text
-    
-    username = extract_username_from_link(text)
-    if username:
-        if text.startswith("http"):
-            link = text
-        else:
-            link = f"https://t.me/{username}"
-        return f'<a href="{link}">@{username}</a>'
-    
-    return text
-
-
-def get_display_text(html_text: str) -> str:
-    text = re.sub(r'<a[^>]*>([^<]*)</a>', r'\1', html_text)
-    text = re.sub(r'<[^>]+>', '', text)
-    return text
-
-
 async def set_signature_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     project = await require_project(update, context)
     if not project:
         return ConversationHandler.END
     
-    current = project.signature or "не установлена"
-    current_display = get_display_text(current) if current != "не установлена" else current
-    
     context.user_data['temp_project_id'] = project.id
     
     await update.message.reply_text(
         f"✍️ <b>Подпись проекта «{project.name}»</b>\n\n"
-        f"<b>Текущая подпись:</b> {current_display}\n\n"
+        f"<b>Текущая подпись:</b> {project.signature or 'не установлена'}\n\n"
         f"<b>Введите подпись:</b>\n\n"
         f"📝 <b>Просто текст:</b>\n"
         f"   <code>Мой канал</code>\n\n"
