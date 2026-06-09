@@ -263,7 +263,6 @@ class Scheduler:
                     await mark_post_parsed(project.id, source.id, best_video["url"])
                     total_parsed += 1
                     
-                    # Всегда скачиваем шортсы
                     download_mode = 'full_shorts'
                     media_downloaded = False
                     media_path = None
@@ -307,7 +306,11 @@ class Scheduler:
             logger.info(f"📤 Found {len(posts_to_publish)} videos to queue")
             
             msk_now = get_moscow_time().replace(tzinfo=None)
-            interval_minutes = max(int(project.post_interval_hours * 60), user.min_post_interval_minutes)
+            interval_minutes = max(
+                int(project.post_interval_hours * 60),
+                user.min_post_interval_minutes,
+                Config.MIN_POST_INTERVAL_MINUTES
+            )
             start_hour = project.active_hours_start
             end_hour = project.active_hours_end
             
