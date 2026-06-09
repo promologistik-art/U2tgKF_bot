@@ -86,31 +86,28 @@ class Scheduler:
                     self._tasks[task_key] = task
                     logger.info(f"⏰ Project '{project.name}' (ID: {project.id}) scheduled")
 
-    async def _download_media_with_retry(self, scraper, media_url: str, save_path: str, max_retries: int = 3) -> bool:
-        for attempt in range(max_retries):
-            if await scraper.download_media(media_url, save_path):
-                try:
-                    file_size = os.path.getsize(save_path)
-                    if file_size < 1000:
-                        logger.warning(f"Downloaded file too small: {file_size} bytes (attempt {attempt + 1})")
-                        os.remove(save_path)
-                        if attempt < max_retries - 1:
-                            await asyncio.sleep(3)
-                            continue
-                        return False
-                    logger.info(f"✅ Media downloaded: {save_path} ({file_size} bytes)")
-                    return True
-                except Exception as e:
-                    logger.warning(f"File check failed: {e}")
-                    if attempt < max_retries - 1:
-                        await asyncio.sleep(3)
-                        continue
-                    return False
-            else:
-                logger.warning(f"Download attempt {attempt + 1} failed for {media_url}")
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(3)
-        return False
+    async def _download_thumbnail(self, url: str, save_path: str) -> bool:
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=30) as resp:
+                    if resp.status == 200:
+                        content = await resp.read()
+                        if len(content) > 1000:
+                            with open(save_path, "wb") as f:
+                                f.write(content)
+                            return True
+            return False
+        except Exception as e:
+            logger.error(f"Thumbnail download error: {e}")
+            return False
+
+    async def _download_full_video(self, scraper, video_url: str, save_path: str) -> bool:
+        try:
+            return await scraper.download_full_video(video_url, save_path)
+        except Exception as e:
+            logger.error(f"Full video download error: {e}")
+            return False
 
     async def _get_last_scheduled_time(self, project_id: int) -> datetime:
         async with AsyncSessionLocal() as session:
@@ -164,141 +161,159 @@ class Scheduler:
         posts_to_publish = []
         total_parsed = 0
         
-        async with TelegramScraper() as scraper:
+        async with YouTubeScraper() as scraper:
             for source in sources:
-                logger.info(f"📡 Fetching @{source.channel_username}")
+                logger.info(f"📡 Fetching from '{source.name}' (type: {source.source_type})")
                 
                 try:
-                    posts = await scraper.get_posts(source.channel_username, limit=100)
-                    logger.info(f"📨 @{source.channel_username}: {len(posts)} posts fetched")
+                    videos = []
+                    if source.source_type == "channel":
+                        if not source.youtube_channel_id:
+                            logger.warning(f"Channel ID missing for source {source.id}")
+                            continue
+                        videos = await scraper.get_videos_from_channel(source.youtube_channel_id, limit=20)
+                    
+                    elif source.source_type == "link":
+                        if not source.youtube_link_url:
+                            logger.warning(f"Link URL missing for source {source.id}")
+                            continue
+                        video = await scraper.get_video_by_url(source.youtube_link_url)
+                        if video:
+                            videos = [video]
+                    
+                    elif source.source_type == "search":
+                        query = source.youtube_search_query
+                        if not query:
+                            logger.warning(f"Search query missing for source {source.id}")
+                            continue
+                        videos = await scraper.search_videos(
+                            query=query,
+                            country=source.youtube_country,
+                            category=source.youtube_category,
+                            content_type=source.youtube_content_type,
+                            limit=20
+                        )
+                    
+                    logger.info(f"📨 '{source.name}': {len(videos)} videos fetched")
+                
                 except Exception as e:
-                    logger.error(f"❌ Failed to fetch @{source.channel_username}: {e}")
+                    logger.error(f"❌ Failed to fetch from '{source.name}': {e}")
                     continue
                 
-                best_post = None
+                best_video = None
                 best_score = -1
                 
-                for post in posts:
-                    if await is_post_parsed(project.id, post["url"]):
-                        continue
-                    
-                    if post.get("is_advertisement", False):
+                for video in videos:
+                    if await is_post_parsed(project.id, video["url"]):
                         continue
                     
                     if source.max_age_hours and source.max_age_hours > 0:
-                        if post.get("datetime"):
+                        if video.get("published_at"):
                             try:
-                                post_time = datetime.fromisoformat(post["datetime"].replace("Z", "+00:00"))
-                                age_hours = (datetime.utcnow() - post_time).total_seconds() / 3600
+                                published = datetime.fromisoformat(video["published_at"].replace("Z", "+00:00"))
+                                age_hours = (datetime.utcnow() - published).total_seconds() / 3600
                                 if age_hours > source.max_age_hours:
-                                    logger.debug(f"⏭️ Post too old: {age_hours:.1f}h > {source.max_age_hours}h")
+                                    logger.debug(f"⏭️ Video too old: {age_hours:.1f}h > {source.max_age_hours}h")
                                     continue
                             except:
                                 pass
                     
                     if source.include_keywords:
                         keywords = [k.strip().lower() for k in source.include_keywords.split(",") if k.strip()]
-                        post_text = post.get("text", "").lower()
-                        if not any(keyword in post_text for keyword in keywords):
-                            logger.debug(f"⏭️ No keywords in post from @{source.channel_username}")
+                        video_text = (video.get("title", "") + " " + video.get("description", "")).lower()
+                        if not any(keyword in video_text for keyword in keywords):
+                            logger.debug(f"⏭️ No keywords in video '{video.get('title', '')}'")
                             continue
                     
-                    media_type = post.get("media_type")
-                    has_media = post.get("has_media", False)
-                    
-                    if source.media_filter == "photo_only":
-                        if not has_media or media_type != "photo":
+                    if source.media_filter == "shorts_only":
+                        if not video.get("is_shorts", False):
                             continue
-                    elif source.media_filter == "video_only":
-                        if not has_media or media_type != "video":
+                    elif source.media_filter == "long_only":
+                        if video.get("is_shorts", False):
                             continue
                     
-                    post["source_username"] = source.channel_username
-                    post["source_title"] = source.channel_title
-                    post["media_filter"] = source.media_filter
-                    post["remove_original_text"] = source.remove_original_text
-                    post["max_video_duration"] = source.max_video_duration
-                    post["exclude_phrases"] = source.exclude_phrases
+                    video["source_name"] = source.name
+                    video["source_type"] = source.source_type
+                    video["media_filter"] = source.media_filter
+                    video["remove_original_text"] = source.remove_original_text
+                    video["max_video_duration"] = source.max_video_duration
+                    video["exclude_phrases"] = source.exclude_phrases
+                    video["download_mode"] = source.download_mode
                     
-                    post_time = datetime.utcnow()
-                    if post.get("datetime"):
-                        try:
-                            post_time = datetime.fromisoformat(post["datetime"].replace("Z", "+00:00"))
-                        except:
-                            pass
-                    
-                    score, is_fallback = calculate_score(post, source.criteria, post_time)
-                    
+                    score, is_fallback = calculate_score(video, source.criteria)
                     if is_fallback:
                         continue
                     
                     if score > best_score:
                         best_score = score
-                        best_post = post
+                        best_video = video
                 
-                if best_post:
+                if best_video:
                     if source.max_video_duration and source.max_video_duration > 0:
-                        video_dur = best_post.get("video_duration", 0)
-                        if video_dur > 0 and video_dur > source.max_video_duration:
-                            logger.info(f"⏰ Video too long from @{source.channel_username}: {video_dur}s > {source.max_video_duration}s max")
+                        dur = best_video.get("duration_seconds", 0)
+                        if dur > 0 and dur > source.max_video_duration:
+                            logger.info(f"⏰ Video too long from '{source.name}': {dur}s > {source.max_video_duration}s")
                             continue
                     
-                    media_type = best_post.get("media_type")
-                    has_media = best_post.get("has_media", False)
+                    logger.info(
+                        f"🏆 Selected from '{source.name}': score={best_score}, "
+                        f"title='{best_video.get('title', '')[:30]}...', "
+                        f"duration={best_video.get('duration_seconds', 0)}s"
+                    )
                     
-                    if source.media_filter == "photo_only":
-                        if not has_media or media_type != "photo":
-                            continue
-                    elif source.media_filter == "video_only":
-                        if not has_media or media_type != "video":
-                            continue
-                    
-                    logger.info(f"🏆 Selected from @{source.channel_username}: score={best_score}, type={media_type}, duration={best_post.get('video_duration', 0)}s")
-                    
-                    await mark_post_parsed(project.id, source.id, best_post["url"])
+                    await mark_post_parsed(project.id, source.id, best_video["url"])
                     total_parsed += 1
                     
+                    download_mode = source.download_mode
                     media_downloaded = False
-                    if best_post.get("has_media") and best_post.get("media_url"):
-                        ext = "jpg" if best_post.get("media_type") == "photo" else "mp4"
-                        filename = f"{uuid.uuid4()}.{ext}"
-                        media_path = os.path.join(Config.TEMP_DIR, filename)
-                        
-                        if await self._download_media_with_retry(scraper, best_post["media_url"], media_path):
-                            best_post["media_path"] = media_path
-                            media_downloaded = True
-                            logger.info(f"💾 Media saved: {media_path}")
-                        else:
-                            logger.warning(f"⚠️ Media download failed for @{source.channel_username}")
+                    media_path = None
+                    media_type = None
                     
-                    if source.media_filter in ("photo_only", "video_only"):
-                        if not media_downloaded:
-                            logger.info(f"🚫 BLOCKED: media_filter={source.media_filter} but media download failed")
-                            continue
+                    if download_mode == "preview":
+                        if best_video.get("thumbnail_url"):
+                            filename = f"{uuid.uuid4()}.jpg"
+                            media_path = os.path.join(Config.TEMP_DIR, filename)
+                            if await self._download_thumbnail(best_video["thumbnail_url"], media_path):
+                                media_downloaded = True
+                                media_type = "photo"
+                                logger.info(f"💾 Thumbnail saved: {media_path}")
                     
-                    if source.remove_original_text and not media_downloaded:
-                        logger.info(f"📝 Skipping (text removed, no media) from @{source.channel_username}")
+                    elif download_mode == "full_shorts":
+                        video_url = best_video.get("url")
+                        if video_url:
+                            filename = f"{uuid.uuid4()}.mp4"
+                            media_path = os.path.join(Config.TEMP_DIR, filename)
+                            if await self._download_full_video(scraper, video_url, media_path):
+                                media_downloaded = True
+                                media_type = "video"
+                                logger.info(f"💾 Full video saved: {media_path}")
+                    
+                    if not media_downloaded:
+                        logger.warning(f"⚠️ Media download failed for '{source.name}'")
                         continue
                     
-                    has_text = bool(best_post.get("text", "").strip())
+                    best_video["media_path"] = media_path
+                    best_video["media_type"] = media_type
+                    
+                    has_text = bool(best_video.get("title", "").strip()) or bool(best_video.get("description", "").strip())
                     if not has_text and not media_downloaded:
-                        logger.info(f"📭 Empty post from @{source.channel_username}, skipping")
+                        logger.info(f"📭 Empty video from '{source.name}', skipping")
                         continue
                     
-                    posts_to_publish.append(best_post)
+                    posts_to_publish.append(best_video)
                     
                     async with AsyncSessionLocal() as session:
                         await session.execute(
                             update(SourceChannel)
                             .where(SourceChannel.id == source.id)
-                            .values(last_parsed=datetime.utcnow(), last_post_url=best_post["url"])
+                            .values(last_parsed=datetime.utcnow(), last_post_url=best_video["url"])
                         )
                         await session.commit()
                 else:
-                    logger.info(f"😴 @{source.channel_username}: no suitable posts")
+                    logger.info(f"😴 '{source.name}': no suitable videos")
         
         if posts_to_publish:
-            logger.info(f"📤 Found {len(posts_to_publish)} posts to queue")
+            logger.info(f"📤 Found {len(posts_to_publish)} videos to queue")
             
             msk_now = get_moscow_time().replace(tzinfo=None)
             interval_minutes = max(project.post_interval_hours, user.min_post_interval_minutes)
@@ -332,7 +347,7 @@ class Scheduler:
                 if next_time.hour >= end_hour:
                     next_time = next_time.replace(hour=start_hour, minute=0, second=0, microsecond=0) + timedelta(days=1)
             
-            for i, post in enumerate(posts_to_publish):
+            for i, video in enumerate(posts_to_publish):
                 if i > 0:
                     next_time = next_time + timedelta(minutes=interval_minutes)
                     if next_time.hour >= end_hour:
@@ -343,11 +358,11 @@ class Scheduler:
                 await self.poster.add_to_queue(
                     project_id=project.id,
                     target_channel_id=target.id,
-                    post_data=post,
+                    post_data=video,
                     scheduled_time=utc_time,
                     platform=target.platform
                 )
-                logger.info(f"📅 Post {i+1} scheduled for {next_time.strftime('%d.%m.%Y %H:%M')} MSK")
+                logger.info(f"📅 Video {i+1} scheduled for {next_time.strftime('%d.%m.%Y %H:%M')} MSK")
             
             async with AsyncSessionLocal() as session:
                 result = await session.execute(select(Project).where(Project.id == project.id))
