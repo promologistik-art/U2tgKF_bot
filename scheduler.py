@@ -264,7 +264,7 @@ class Scheduler:
                     await mark_post_parsed(project.id, source.id, best_video["url"])
                     total_parsed += 1
                     
-                    download_mode = source.download_mode
+                    download_mode = getattr(source, 'download_mode', 'preview')
                     media_downloaded = False
                     media_path = None
                     media_type = None
