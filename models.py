@@ -43,7 +43,7 @@ class Project(Base):
     name = Column(String, nullable=False)
     is_active = Column(Boolean, default=True)
     check_interval_minutes = Column(Integer, default=60)
-    post_interval_minutes = Column(Integer, default=2)  # ← переименовано и теперь в минутах
+    post_interval_minutes = Column(Integer, default=2)  # ← теперь минуты
     active_hours_start = Column(Integer, default=8)
     active_hours_end = Column(Integer, default=22)
     signature = Column(String, nullable=True)
@@ -101,7 +101,7 @@ class TargetChannel(Base):
 class ParsedPost(Base):
     __tablename__ = f"{PREFIX}parsed_posts"
     id = Column(Integer, primary_key=True)
-    project_id = Column(Integer, ForeignKey(f"{PREFIX}projects.id"), nullable=False)
+    project_id = Column(Integer, ForeignKey(f"{PREFIX}projects.id}), nullable=False)
     source_channel_id = Column(Integer, nullable=False)
     post_url = Column(String, nullable=False)
     parsed_at = Column(DateTime, default=datetime.utcnow)
@@ -112,7 +112,7 @@ class ParsedPost(Base):
 class PostQueue(Base):
     __tablename__ = f"{PREFIX}post_queue"
     id = Column(Integer, primary_key=True)
-    project_id = Column(Integer, ForeignKey(f"{PREFIX}projects.id"), nullable=False)
+    project_id = Column(Integer, ForeignKey(f"{PREFIX}projects.id}), nullable=False)
     target_channel_id = Column(BigInteger, nullable=False)
     platform = Column(String, default="telegram")
     post_data = Column(JSON, nullable=False)
@@ -126,7 +126,7 @@ class PostQueue(Base):
 class PublishedPost(Base):
     __tablename__ = f"{PREFIX}published_posts"
     id = Column(Integer, primary_key=True)
-    project_id = Column(Integer, ForeignKey(f"{PREFIX}projects.id"), nullable=False)
+    project_id = Column(Integer, ForeignKey(f"{PREFIX}projects.id}), nullable=False)
     target_channel_id = Column(BigInteger, nullable=False)
     platform = Column(String, default="telegram")
     source_channel_username = Column(String, nullable=False)
