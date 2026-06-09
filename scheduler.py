@@ -238,7 +238,7 @@ class Scheduler:
                     video["remove_original_text"] = source.remove_original_text
                     video["max_video_duration"] = source.max_video_duration
                     video["exclude_phrases"] = source.exclude_phrases
-                    video["download_mode"] = source.download_mode
+                    #video["download_mode"] = source.download_mode
                     
                     score, is_fallback = calculate_score(video, source.criteria)
                     if is_fallback:
