@@ -1,4 +1,7 @@
 import logging
+import os
+import re
+import subprocess
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict
 from googleapiclient.discovery import build
@@ -61,7 +64,6 @@ class YouTubeScraper:
             if not video_ids:
                 return []
             
-            # Получаем детали видео (просмотры, лайки, длительность)
             videos = await self._get_video_details(video_ids)
             return videos
         except HttpError as e:
@@ -70,7 +72,6 @@ class YouTubeScraper:
 
     async def get_video_by_url(self, url: str) -> Optional[Dict]:
         """Получает одно видео по ссылке."""
-        # Извлекаем ID видео из URL
         video_id = self._extract_video_id(url)
         if not video_id:
             logger.warning(f"Could not extract video ID from URL: {url}")
@@ -89,14 +90,12 @@ class YouTubeScraper:
     ) -> List[Dict]:
         """Поиск видео по запросу с фильтрами."""
         try:
-            # Определяем тип контента (shorts/long)
             video_duration = None
             if content_type == "shorts":
-                video_duration = "short"  # до 60 секунд
+                video_duration = "short"
             elif content_type == "long":
-                video_duration = "long"  # более 20 минут
+                video_duration = "long"
             
-            # Строим запрос
             search_params = {
                 'part': 'snippet',
                 'q': query,
@@ -130,7 +129,6 @@ class YouTubeScraper:
         
         try:
             videos = []
-            # Разбиваем на чанки по 50 (ограничение API)
             for i in range(0, len(video_ids), 50):
                 chunk = video_ids[i:i+50]
                 request = self.youtube.videos().list(
@@ -149,21 +147,19 @@ class YouTubeScraper:
             return []
 
     def _parse_video(self, item: Dict) -> Dict:
-        """Парсит ответ API в единый формат."""
         snippet = item.get('snippet', {})
         statistics = item.get('statistics', {})
         content_details = item.get('contentDetails', {})
         
-        # Получаем длительность в секундах
         duration_str = content_details.get('duration', 'PT0S')
         duration_seconds = self._parse_duration(duration_str)
-        
-        # Определяем тип видео (shorts или обычное)
         is_shorts = duration_seconds <= 60
         
         video_id = item['id']
         thumbnails = snippet.get('thumbnails', {})
-        thumbnail_url = thumbnails.get('high', {}).get('url') or thumbnails.get('medium', {}).get('url') or thumbnails.get('default', {}).get('url')
+        thumbnail_url = thumbnails.get('standard', {}).get('url') or \
+                        thumbnails.get('high', {}).get('url') or \
+                        thumbnails.get('medium', {}).get('url')
         
         return {
             'url': f"https://www.youtube.com/watch?v={video_id}",
@@ -183,21 +179,16 @@ class YouTubeScraper:
         }
 
     def _parse_duration(self, duration_str: str) -> int:
-        """Парсит длительность видео из ISO 8601 (PT1H2M3S)."""
-        import re
         pattern = r'PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?'
         match = re.match(pattern, duration_str)
         if not match:
             return 0
-        
         hours = int(match.group(1)) if match.group(1) else 0
         minutes = int(match.group(2)) if match.group(2) else 0
         seconds = int(match.group(3)) if match.group(3) else 0
         return hours * 3600 + minutes * 60 + seconds
 
     def _extract_video_id(self, url: str) -> Optional[str]:
-        """Извлекает ID видео из URL."""
-        import re
         patterns = [
             r'(?:https?://)?(?:www\.)?youtube\.com/watch\?v=([a-zA-Z0-9_-]{11})',
             r'(?:https?://)?(?:www\.)?youtu\.be/([a-zA-Z0-9_-]{11})',
@@ -212,18 +203,15 @@ class YouTubeScraper:
         return None
 
     def _extract_channel_id(self, url_or_input: str) -> Optional[str]:
-        """Извлекает ID канала из URL или ввода."""
-        import re
         patterns = [
-            r'(?:https?://)?(?:www\.)?youtube\.com/@([a-zA-Z0-9_-]+)',
             r'(?:https?://)?(?:www\.)?youtube\.com/channel/(UC[a-zA-Z0-9_-]{22})',
+            r'(?:https?://)?(?:www\.)?youtube\.com/@([a-zA-Z0-9_-]+)',
             r'@([a-zA-Z0-9_-]+)',
             r'UC[a-zA-Z0-9_-]{22}'
         ]
         for pattern in patterns:
             match = re.search(pattern, url_or_input)
             if match:
-                # Если нашли @username, нужно преобразовать в channel_id через API
                 username = match.group(1)
                 if not username.startswith('UC'):
                     channel_id = self._get_channel_id_by_username(username)
@@ -234,7 +222,6 @@ class YouTubeScraper:
         return None
 
     async def _get_channel_id_by_username(self, username: str) -> Optional[str]:
-        """Получает ID канала по username (через API)."""
         try:
             request = self.youtube.channels().list(
                 part='id',
@@ -247,3 +234,42 @@ class YouTubeScraper:
             return None
         except HttpError:
             return None
+
+    # ============ ДОБАВЛЕННЫЙ МЕТОД ============
+    async def download_full_video(self, video_url: str, save_path: str) -> bool:
+        """
+        Скачивает полное видео с помощью yt-dlp.
+        Возвращает True при успехе.
+        """
+        try:
+            cmd = [
+                'yt-dlp',
+                '--format', 'best[height<=1080][ext=mp4]',
+                '--output', save_path,
+                '--no-playlist',
+                '--quiet',
+                '--no-warnings',
+                video_url
+            ]
+            
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            stdout, stderr = await process.communicate()
+            
+            if process.returncode == 0:
+                if os.path.exists(save_path) and os.path.getsize(save_path) > 1024:
+                    logger.info(f"✅ Video downloaded: {save_path}")
+                    return True
+                else:
+                    logger.warning(f"Downloaded file empty or too small: {save_path}")
+                    return False
+            else:
+                logger.error(f"yt-dlp error: {stderr.decode().strip()}")
+                return False
+        except Exception as e:
+            logger.error(f"Failed to download video: {e}")
+            return False
+    # ============================================
