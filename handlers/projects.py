@@ -112,7 +112,7 @@ async def project_menu_callback(update: Update, context: ContextTypes.DEFAULT_TY
     target_name = target.channel_title if target else 'не задана'
     
     # post_interval_hours теперь хранит минуты
-    if project.post_interval_hours < 60:
+    if project.post_interval_minutes < 60:
         interval_display = f"каждые {project.post_interval_hours} мин"
     else:
         hours = project.post_interval_hours // 60
