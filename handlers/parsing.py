@@ -95,7 +95,7 @@ async def queue_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     text = f"📬 <b>Очередь публикации «{project.name}»</b>\n\n"
     
-    interval_minutes = int(project.post_interval_hours * 60)
+    interval_minutes = int(project.post_interval_minutes)
     if interval_minutes < 60:
         text += f"⏰ Интервал: каждые {interval_minutes} мин\n\n"
     else:
