@@ -7,17 +7,14 @@ from sqlalchemy import update as sql_update, select, delete
 from database import AsyncSessionLocal
 from models import Project, PostQueue
 from .utils import require_project, check_action_limit, check_user_access
-from .constants import AWAITING_INTERVAL, AWAITING_SIGNATURE, AWAITING_POST_INTERVAL
+from .constants import AWAITING_INTERVAL, AWAITING_SIGNATURE, AWAITING_POST_INTERVAL, AWAITING_POST_START_TIME
 
 logger = logging.getLogger(__name__)
-
-AWAITING_POST_START_TIME = 17
 
 
 # ============ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ============
 
 async def show_project_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, project_id: int):
-    """Показывает меню проекта (вызывается после изменения настроек)."""
     from .projects import project_menu_callback
     
     class FakeQuery:
@@ -52,29 +49,26 @@ async def show_project_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             self.effective_user = effective_user
     
     fake_update = FakeUpdate(fake_query, update.effective_user)
-    
     await project_menu_callback(fake_update, context)
 
 
 async def get_next_valid_time(msk_now: datetime, start_hour: int, end_hour: int, interval_minutes: int) -> datetime:
     """Возвращает ближайшее допустимое время публикации с учётом активных часов."""
-    # Если сейчас раньше начала активных часов
+    if interval_minutes <= 0:
+        interval_minutes = 60
+    
     if msk_now.hour < start_hour:
         return msk_now.replace(hour=start_hour, minute=0, second=0, microsecond=0)
     
-    # Если сейчас в активных часах
     if start_hour <= msk_now.hour < end_hour:
-        # Округляем до следующего интервала
         minutes_since_start = (msk_now.hour - start_hour) * 60 + msk_now.minute
         slots = (minutes_since_start + interval_minutes - 1) // interval_minutes
         next_time = msk_now.replace(hour=start_hour, minute=0, second=0, microsecond=0) + timedelta(minutes=slots * interval_minutes)
         
-        # Если следующий пост выходит за пределы активных часов
         if next_time.hour >= end_hour:
             return next_time.replace(hour=start_hour, minute=0, second=0, microsecond=0) + timedelta(days=1)
         return next_time
     
-    # Если сейчас после активных часов
     return msk_now.replace(hour=start_hour, minute=0, second=0, microsecond=0) + timedelta(days=1)
 
 
@@ -97,33 +91,33 @@ async def recalc_queue_after_interval_change(project_id: int, context: ContextTy
             return
         
         posts_data = [item.post_data for item in pending_posts]
+        first_target_channel_id = pending_posts[0].target_channel_id
+        first_platform = pending_posts[0].platform
         
         for item in pending_posts:
             await session.delete(item)
         await session.commit()
         
-        interval_minutes = int(project.post_interval_hours * 60)
+        interval_minutes = project.post_interval_minutes  # ← теперь это минуты
         msk_now = get_moscow_time().replace(tzinfo=None)
         
         start_hour = project.active_hours_start
         end_hour = project.active_hours_end
         
-        # Первый пост — ближайшее допустимое время
         next_time = await get_next_valid_time(msk_now, start_hour, end_hour, interval_minutes)
         
         for i, post_data in enumerate(posts_data):
             if i > 0:
                 next_time = next_time + timedelta(minutes=interval_minutes)
-                # Если вышли за пределы активных часов — переносим на следующий день
-                if next_time.hour >= end_hour or (i == 0 and next_time.hour >= end_hour):
+                if next_time.hour >= end_hour:
                     next_time = next_time.replace(hour=start_hour, minute=0, second=0, microsecond=0) + timedelta(days=1)
             
             utc_time = next_time - timedelta(hours=3)
             
             queue_item = PostQueue(
                 project_id=project_id,
-                target_channel_id=pending_posts[0].target_channel_id,
-                platform=pending_posts[0].platform,
+                target_channel_id=first_target_channel_id,
+                platform=first_platform,
                 post_data=post_data,
                 scheduled_time=utc_time,
                 status="pending"
@@ -131,12 +125,10 @@ async def recalc_queue_after_interval_change(project_id: int, context: ContextTy
             session.add(queue_item)
         
         await session.commit()
-        
-        logger.info(f"🔄 Queue recalculated for project {project_id}: {len(posts_data)} posts rescheduled with {interval_minutes} min interval (active hours: {start_hour}:00-{end_hour}:00)")
+        logger.info(f"🔄 Queue recalculated for project {project_id}: {len(posts_data)} posts rescheduled with {interval_minutes} min interval")
 
 
 async def reset_all_dialogs(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Сбрасывает все активные диалоги и очищает user_data."""
     keys_to_remove = [
         'temp_project_id', 'temp_post_interval', 'temp_media_filter',
         'temp_max_video_duration', 'temp_criteria', 'edit_source_id',
@@ -157,7 +149,6 @@ async def reset_all_dialogs(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ============ ENTRY POINTS ДЛЯ МЕНЮ ПРОЕКТА ============
 
 async def set_interval_start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Entry point для настройки интервала парсинга из меню проекта."""
     query = update.callback_query
     await query.answer()
     
@@ -210,7 +201,6 @@ async def set_interval_start_callback(update: Update, context: ContextTypes.DEFA
 
 
 async def set_post_interval_start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Entry point для настройки интервала постинга из меню проекта."""
     query = update.callback_query
     await query.answer()
     
@@ -236,176 +226,10 @@ async def set_post_interval_start_callback(update: Update, context: ContextTypes
         result = await session.execute(select(Project).where(Project.id == project_id))
         project = result.scalar_one()
     
-    current_minutes = int(project.post_interval_hours * 60)
+    current_minutes = project.post_interval_minutes
     current_text = f"{current_minutes} минут"
     
     await query.edit_message_text(
-        f"📅 <b>Интервал между публикациями</b>\n\n"
-        f"Проект: {project.name}\n"
-        f"Текущий интервал: {current_text}\n"
-        f"Минимальный для вашего тарифа: {min_interval} мин\n\n"
-        f"<b>Шаг 1 из 2:</b> Выберите интервал:",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="HTML"
-    )
-    return AWAITING_POST_INTERVAL
-
-
-async def set_signature_start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Entry point для настройки подписи из меню проекта."""
-    query = update.callback_query
-    await query.answer()
-    
-    project_id = int(query.data.replace("project_set_signature_", ""))
-    context.user_data['temp_project_id'] = project_id
-    
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(select(Project).where(Project.id == project_id))
-        project = result.scalar_one()
-    
-    current = project.signature or "не установлена"
-    current_display = get_display_text(current) if current != "не установлена" else current
-    
-    await query.edit_message_text(
-        f"✍️ <b>Подпись проекта «{project.name}»</b>\n\n"
-        f"<b>Текущая подпись:</b> {current_display}\n\n"
-        f"<b>Введите подпись:</b>\n\n"
-        f"📝 <b>Просто текст:</b>\n"
-        f"   <code>Мой канал</code>\n\n"
-        f"🔗 <b>Текст + ссылка (через | ):</b>\n"
-        f"   <code>Мой канал | https://t.me/username</code>\n\n"
-        f"🔗 <b>Текст со ссылкой или @username:</b>\n"
-        f"   <code>Сделано в https://t.me/username</code>\n"
-        f"   <code>Сделано в @username</code>\n"
-        f"   <i>Бот сам сделает ссылку кликабельной</i>\n\n"
-        f"🔗 <b>Только ссылка:</b>\n"
-        f"   <code>https://t.me/username</code>\n\n"
-        f"Отправьте <code>удалить</code> чтобы убрать подпись.\n"
-        f"/cancel — отмена",
-        parse_mode="HTML"
-    )
-    return AWAITING_SIGNATURE
-
-
-# ============ НАСТРОЙКА ИНТЕРВАЛА ПАРСИНГА ============
-
-async def set_interval_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Настройка интервала парсинга."""
-    project = await require_project(update, context)
-    
-    if not project:
-        return ConversationHandler.END
-    
-    telegram_id = update.effective_user.id
-    has_access, message, user = await check_user_access(telegram_id)
-    if not has_access:
-        await update.message.reply_text(message)
-        return ConversationHandler.END
-    
-    context.user_data['temp_project_id'] = project.id
-    
-    min_interval = user.min_check_interval_minutes if not user.is_admin else 30
-    
-    all_intervals = [30, 60, 120, 180, 360, 720]
-    keyboard = []
-    row = []
-    for interval in all_intervals:
-        if interval >= min_interval or user.is_admin:
-            if interval < 60:
-                text = f"🕐 {interval} минут"
-            else:
-                hours = interval // 60
-                text = f"🕑 {hours} час"
-                if hours in [2, 3, 4]:
-                    text += "а"
-                elif hours > 4:
-                    text += "ов"
-            row.append(InlineKeyboardButton(text, callback_data=f"interval_{interval}"))
-            if len(row) == 2:
-                keyboard.append(row)
-                row = []
-    if row:
-        keyboard.append(row)
-    
-    await update.message.reply_text(
-        f"⏰ <b>Интервал парсинга</b>\n\n"
-        f"Проект: {project.name}\n"
-        f"Текущий: {project.check_interval_minutes} мин\n"
-        f"Минимальный для вашего тарифа: {min_interval} мин\n\n"
-        f"Выберите новый интервал:",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="HTML"
-    )
-    return AWAITING_INTERVAL
-
-
-async def set_interval_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Сохранение интервала парсинга."""
-    query = update.callback_query
-    await query.answer()
-    
-    interval = int(query.data.replace("interval_", ""))
-    project_id = context.user_data.get('temp_project_id')
-    
-    telegram_id = update.effective_user.id
-    has_access, message, user = await check_user_access(telegram_id)
-    if not has_access:
-        await query.edit_message_text(message)
-        return ConversationHandler.END
-    
-    can_set, limit_msg = await check_action_limit(user, "set_check_interval", interval_minutes=interval)
-    if not can_set and not user.is_admin:
-        await query.edit_message_text(f"❌ {limit_msg}")
-        return ConversationHandler.END
-    
-    async with AsyncSessionLocal() as session:
-        await session.execute(
-            sql_update(Project)
-            .where(Project.id == project_id)
-            .values(check_interval_minutes=interval)
-        )
-        await session.commit()
-    
-    await query.edit_message_text(f"✅ Интервал парсинга: {interval} минут")
-    
-    context.user_data.pop('temp_project_id', None)
-    
-    result = ConversationHandler.END
-    await show_project_menu(update, context, project_id)
-    
-    return result
-
-
-# ============ НАСТРОЙКА ИНТЕРВАЛА ПУБЛИКАЦИИ ============
-
-async def set_post_interval_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Шаг 1: Выбор интервала между публикациями."""
-    project = await require_project(update, context)
-    
-    if not project:
-        return ConversationHandler.END
-    
-    telegram_id = update.effective_user.id
-    has_access, message, user = await check_user_access(telegram_id)
-    if not has_access:
-        await update.message.reply_text(message)
-        return ConversationHandler.END
-    
-    context.user_data['temp_project_id'] = project.id
-    
-    min_interval = user.min_post_interval_minutes if not user.is_admin else 15
-    
-    all_intervals = [15, 30, 60]
-    keyboard = []
-    for interval in all_intervals:
-        if interval >= min_interval or user.is_admin:
-            text = f"🕐 {interval} минут"
-            keyboard.append([InlineKeyboardButton(text, callback_data=f"post_{interval}")])
-    
-    current_minutes = int(project.post_interval_hours * 60)
-    current_text = f"{current_minutes} минут"
-    
-    await update.message.reply_text(
         f"📅 <b>Интервал между публикациями</b>\n\n"
         f"Проект: {project.name}\n"
         f"Текущий интервал: {current_text}\n"
@@ -418,7 +242,6 @@ async def set_post_interval_start(update: Update, context: ContextTypes.DEFAULT_
 
 
 async def set_post_interval_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Шаг 2: Выбор времени первой публикации."""
     query = update.callback_query
     await query.answer()
     
@@ -463,12 +286,10 @@ async def set_post_interval_callback(update: Update, context: ContextTypes.DEFAU
 
 
 async def set_post_start_time_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Сохранение интервала и времени старта + пересчёт очереди."""
     query = update.callback_query
     await query.answer()
     
     minutes = context.user_data.get('temp_post_interval', 30)
-    hours = minutes / 60
     project_id = context.user_data.get('temp_project_id')
     
     telegram_id = update.effective_user.id
@@ -487,7 +308,7 @@ async def set_post_start_time_callback(update: Update, context: ContextTypes.DEF
             await session.execute(
                 sql_update(Project)
                 .where(Project.id == project_id)
-                .values(post_interval_hours=hours)
+                .values(post_interval_minutes=minutes)
             )
             await session.commit()
         
@@ -520,7 +341,7 @@ async def set_post_start_time_callback(update: Update, context: ContextTypes.DEF
                 sql_update(Project)
                 .where(Project.id == project_id)
                 .values(
-                    post_interval_hours=hours,
+                    post_interval_minutes=minutes,
                     active_hours_start=0,
                     active_hours_end=24
                 )
@@ -559,7 +380,7 @@ async def set_post_start_time_callback(update: Update, context: ContextTypes.DEF
             sql_update(Project)
             .where(Project.id == project_id)
             .values(
-                post_interval_hours=hours,
+                post_interval_minutes=minutes,
                 active_hours_start=hour,
                 active_hours_end=23
             )
