@@ -541,7 +541,7 @@ async def remove_text_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             media_filter=media_filter,
             remove_original_text=remove_text,
             max_video_duration=max_video_duration,
-            # download_mode=download_mode,  # Временно отключено
+            download_mode=download_mode,
             max_age_hours=24
         )
         session.add(channel)
@@ -623,7 +623,12 @@ async def finish_source_addition(update: Update, context: ContextTypes.DEFAULT_T
     if update.callback_query:
         await update.callback_query.edit_message_text(reply)
     else:
-        await update.message.reply_text(reply)
+        # Если нет callback_query, но есть message — используем reply_text
+        if update.message:
+            await update.message.reply_text(reply)
+        else:
+            # Если нет ни того, ни другого — логируем ошибку
+            logger.warning(f"Neither callback_query nor message found in finish_source_addition for reply: {reply}")
 
     _clear_dialog(context)
 
