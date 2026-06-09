@@ -492,6 +492,216 @@ async def set_interval_callback(update: Update, context: ContextTypes.DEFAULT_TY
     return result
 
 
+# ============ НАСТРОЙКА ИНТЕРВАЛА ПУБЛИКАЦИИ (через команду) ============
+
+async def set_post_interval_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    project = await require_project(update, context)
+    if not project:
+        return ConversationHandler.END
+    
+    telegram_id = update.effective_user.id
+    has_access, message, user = await check_user_access(telegram_id)
+    if not has_access:
+        await update.message.reply_text(message)
+        return ConversationHandler.END
+    
+    context.user_data['temp_project_id'] = project.id
+    
+    min_interval = user.min_post_interval_minutes if not user.is_admin else 15
+    
+    all_intervals = [15, 30, 60]
+    keyboard = []
+    for interval in all_intervals:
+        if interval >= min_interval or user.is_admin:
+            text = f"🕐 {interval} минут"
+            keyboard.append([InlineKeyboardButton(text, callback_data=f"post_{interval}")])
+    
+    current_minutes = project.post_interval_minutes
+    current_text = f"{current_minutes} минут"
+    
+    await update.message.reply_text(
+        f"📅 <b>Интервал между публикациями</b>\n\n"
+        f"Проект: {project.name}\n"
+        f"Текущий интервал: {current_text}\n"
+        f"Минимальный для вашего тарифа: {min_interval} мин\n\n"
+        f"<b>Шаг 1 из 2:</b> Выберите интервал:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="HTML"
+    )
+    return AWAITING_POST_INTERVAL
+
+
+async def set_post_interval_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    minutes = int(query.data.replace("post_", ""))
+    context.user_data['temp_post_interval'] = minutes
+    
+    project_id = context.user_data.get('temp_project_id')
+    
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(Project).where(Project.id == project_id))
+        project = result.scalar_one()
+    
+    keyboard = []
+    row = []
+    for hour in range(6, 24):
+        for minute in [0, 30]:
+            if hour == 23 and minute == 30:
+                break
+            time_str = f"{hour:02d}:{minute:02d}"
+            callback_data = f"starttime_{hour}_{minute}"
+            row.append(InlineKeyboardButton(time_str, callback_data=callback_data))
+            if len(row) == 4:
+                keyboard.append(row)
+                row = []
+    if row:
+        keyboard.append(row)
+    
+    keyboard.append([InlineKeyboardButton("🌙 Круглосуточно", callback_data="starttime_24_7")])
+    keyboard.append([InlineKeyboardButton("↩️ Оставить текущее", callback_data="starttime_skip")])
+    
+    await query.edit_message_text(
+        f"📅 <b>Интервал между публикациями</b>\n\n"
+        f"Выбран интервал: <b>{minutes} минут</b>\n\n"
+        f"<b>Шаг 2 из 2:</b> Выберите время первой публикации\n"
+        f"или нажмите «Круглосуточно»:\n\n"
+        f"💡 Посты будут выходить с выбранного времени\n"
+        f"каждые {minutes} минут.",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="HTML"
+    )
+    return AWAITING_POST_START_TIME
+
+
+async def set_post_start_time_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    minutes = context.user_data.get('temp_post_interval', 30)
+    project_id = context.user_data.get('temp_project_id')
+    
+    telegram_id = update.effective_user.id
+    has_access, message, user = await check_user_access(telegram_id)
+    if not has_access:
+        await query.edit_message_text(message)
+        return ConversationHandler.END
+    
+    can_set, limit_msg = await check_action_limit(user, "set_post_interval", interval_minutes=minutes)
+    if not can_set and not user.is_admin:
+        await query.edit_message_text(f"❌ {limit_msg}")
+        return ConversationHandler.END
+    
+    if query.data == "starttime_skip":
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                sql_update(Project)
+                .where(Project.id == project_id)
+                .values(post_interval_minutes=minutes)
+            )
+            await session.commit()
+        
+        await query.edit_message_text(
+            f"✅ Интервал обновлён: <b>{minutes} минут</b>\n"
+            f"🕐 Время старта без изменений.\n\n"
+            f"🔄 Пересчитываю очередь публикаций...",
+            parse_mode="HTML"
+        )
+        
+        await recalc_queue_after_interval_change(project_id, context)
+        
+        await query.edit_message_text(
+            f"✅ Интервал обновлён: <b>{minutes} минут</b>\n"
+            f"🕐 Время старта без изменений.\n\n"
+            f"✅ Очередь пересчитана с учётом активных часов.",
+            parse_mode="HTML"
+        )
+        
+        context.user_data.pop('temp_project_id', None)
+        context.user_data.pop('temp_post_interval', None)
+        
+        result = ConversationHandler.END
+        await show_project_menu(update, context, project_id)
+        return result
+    
+    if query.data == "starttime_24_7":
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                sql_update(Project)
+                .where(Project.id == project_id)
+                .values(
+                    post_interval_minutes=minutes,
+                    active_hours_start=0,
+                    active_hours_end=24
+                )
+            )
+            await session.commit()
+        
+        await query.edit_message_text(
+            f"✅ Интервал: <b>{minutes} минут</b>\n"
+            f"🌙 Режим: <b>круглосуточно</b>\n\n"
+            f"🔄 Пересчитываю очередь публикаций...",
+            parse_mode="HTML"
+        )
+        
+        await recalc_queue_after_interval_change(project_id, context)
+        
+        await query.edit_message_text(
+            f"✅ Интервал: <b>{minutes} минут</b>\n"
+            f"🌙 Режим: <b>круглосуточно</b>\n\n"
+            f"✅ Очередь пересчитана.",
+            parse_mode="HTML"
+        )
+        
+        context.user_data.pop('temp_project_id', None)
+        context.user_data.pop('temp_post_interval', None)
+        
+        result = ConversationHandler.END
+        await show_project_menu(update, context, project_id)
+        return result
+    
+    parts = query.data.split("_")
+    hour = int(parts[1])
+    minute = int(parts[2])
+    
+    async with AsyncSessionLocal() as session:
+        await session.execute(
+            sql_update(Project)
+            .where(Project.id == project_id)
+            .values(
+                post_interval_minutes=minutes,
+                active_hours_start=hour,
+                active_hours_end=23
+            )
+        )
+        await session.commit()
+    
+    time_str = f"{hour:02d}:{minute:02d}"
+    await query.edit_message_text(
+        f"✅ Интервал: <b>{minutes} минут</b>\n"
+        f"🕐 Первая публикация в: <b>{time_str}</b>\n\n"
+        f"🔄 Пересчитываю очередь публикаций...",
+        parse_mode="HTML"
+    )
+    
+    await recalc_queue_after_interval_change(project_id, context)
+    
+    await query.edit_message_text(
+        f"✅ Интервал: <b>{minutes} минут</b>\n"
+        f"🕐 Первая публикация в: <b>{time_str}</b>\n\n"
+        f"✅ Очередь пересчитана с учётом активных часов.",
+        parse_mode="HTML"
+    )
+    
+    context.user_data.pop('temp_project_id', None)
+    context.user_data.pop('temp_post_interval', None)
+    
+    result = ConversationHandler.END
+    await show_project_menu(update, context, project_id)
+    return result
+
+
 # ============ НАСТРОЙКА ПОДПИСИ ============
 
 async def set_signature_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -546,98 +756,3 @@ async def set_signature_input(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.user_data.pop('temp_project_id', None)
     
     return ConversationHandler.END
-
-
-# ============ ENTRY POINTS ДЛЯ МЕНЮ ПРОЕКТА (для кнопок) ============
-
-async def set_interval_start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    project_id = int(query.data.replace("project_set_check_", ""))
-    context.user_data['temp_project_id'] = project_id
-    
-    telegram_id = update.effective_user.id
-    has_access, message, user = await check_user_access(telegram_id)
-    if not has_access:
-        await query.edit_message_text(message)
-        return ConversationHandler.END
-    
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(select(Project).where(Project.id == project_id))
-        project = result.scalar_one()
-    
-    min_interval = user.min_check_interval_minutes if not user.is_admin else 30
-    
-    all_intervals = [30, 60, 120, 180, 360, 720]
-    keyboard = []
-    row = []
-    for interval in all_intervals:
-        if interval >= min_interval or user.is_admin:
-            if interval < 60:
-                text = f"🕐 {interval} минут"
-            else:
-                hours = interval // 60
-                text = f"🕑 {hours} час"
-                if hours in [2, 3, 4]:
-                    text += "а"
-                elif hours > 4:
-                    text += "ов"
-            row.append(InlineKeyboardButton(text, callback_data=f"interval_{interval}"))
-            if len(row) == 2:
-                keyboard.append(row)
-                row = []
-    if row:
-        keyboard.append(row)
-    
-    await query.edit_message_text(
-        f"⏰ <b>Интервал парсинга</b>\n\n"
-        f"Проект: {project.name}\n"
-        f"Текущий: {project.check_interval_minutes} мин\n"
-        f"Минимальный для вашего тарифа: {min_interval} мин\n\n"
-        f"Выберите новый интервал:",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="HTML"
-    )
-    return AWAITING_INTERVAL
-
-
-async def set_post_interval_start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    project_id = int(query.data.replace("project_set_post_", ""))
-    context.user_data['temp_project_id'] = project_id
-    
-    telegram_id = update.effective_user.id
-    has_access, message, user = await check_user_access(telegram_id)
-    if not has_access:
-        await query.edit_message_text(message)
-        return ConversationHandler.END
-    
-    min_interval = user.min_post_interval_minutes if not user.is_admin else 15
-    
-    all_intervals = [15, 30, 60]
-    keyboard = []
-    for interval in all_intervals:
-        if interval >= min_interval or user.is_admin:
-            text = f"🕐 {interval} минут"
-            keyboard.append([InlineKeyboardButton(text, callback_data=f"post_{interval}")])
-    
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(select(Project).where(Project.id == project_id))
-        project = result.scalar_one()
-    
-    current_minutes = project.post_interval_minutes
-    current_text = f"{current_minutes} минут"
-    
-    await query.edit_message_text(
-        f"📅 <b>Интервал между публикациями</b>\n\n"
-        f"Проект: {project.name}\n"
-        f"Текущий интервал: {current_text}\n"
-        f"Минимальный для вашего тарифа: {min_interval} мин\n\n"
-        f"<b>Шаг 1 из 2:</b> Выберите интервал:",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="HTML"
-    )
-    return AWAITING_POST_INTERVAL
