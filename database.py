@@ -1,7 +1,7 @@
 import os
 import logging
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy import select, text
+from sqlalchemy import select
 from datetime import datetime, timedelta
 from config import Config
 from models import Base, User, Project

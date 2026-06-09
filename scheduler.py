@@ -238,7 +238,6 @@ class Scheduler:
                     video["remove_original_text"] = source.remove_original_text
                     video["max_video_duration"] = source.max_video_duration
                     video["exclude_phrases"] = source.exclude_phrases
-                    video["download_mode"] = getattr(source, 'download_mode', 'preview')
                     
                     score, is_fallback = calculate_score(video, source.criteria)
                     if is_fallback:
@@ -264,21 +263,13 @@ class Scheduler:
                     await mark_post_parsed(project.id, source.id, best_video["url"])
                     total_parsed += 1
                     
-                    download_mode = getattr(source, 'download_mode', 'preview')
+                    # ============ ВСЕГДА СКАЧИВАЕМ ШОРТСЫ ============
+                    download_mode = 'full_shorts'  # жёстко задаём
                     media_downloaded = False
                     media_path = None
                     media_type = None
                     
-                    if download_mode == "preview":
-                        if best_video.get("thumbnail_url"):
-                            filename = f"{uuid.uuid4()}.jpg"
-                            media_path = os.path.join(Config.TEMP_DIR, filename)
-                            if await self._download_thumbnail(best_video["thumbnail_url"], media_path):
-                                media_downloaded = True
-                                media_type = "photo"
-                                logger.info(f"💾 Thumbnail saved: {media_path}")
-                    
-                    elif download_mode == "full_shorts":
+                    if download_mode == 'full_shorts':
                         video_url = best_video.get("url")
                         if video_url:
                             filename = f"{uuid.uuid4()}.mp4"
