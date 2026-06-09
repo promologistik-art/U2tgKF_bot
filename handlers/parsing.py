@@ -107,12 +107,11 @@ async def queue_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for item in items:
         post_data = item.post_data
         status_icon = {"pending": "⏳", "published": "✅", "failed": "❌"}.get(item.status, "❓")
-        
         scheduled_msk = item.scheduled_time + MSK_OFFSET
         
         text += f"{status_icon} {scheduled_msk.strftime('%d.%m.%Y %H:%M')} МСК\n"
-        text += f"   📡 @{post_data.get('source_username', '?')}\n"
-        text += f"   👁 {format_number(post_data.get('views', 0))} | ❤️ {format_number(post_data.get('reactions', 0))}\n"
+        text += f"   📡 {post_data.get('source_name', '?')}\n"
+        text += f"   👁 {format_number(post_data.get('views', 0))} | ❤️ {format_number(post_data.get('likes', 0))}\n"
         
         if item.status == "failed" and item.error_message:
             text += f"   ⚠️ {item.error_message[:100]}\n"
@@ -155,8 +154,8 @@ async def post_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
             post_data = queue_item.post_data
             await msg.edit_text(
                 f"✅ Пост опубликован!\n\n"
-                f"📡 @{post_data.get('source_username', '?')}\n"
-                f"👁 {format_number(post_data.get('views', 0))} | ❤️ {format_number(post_data.get('reactions', 0))}"
+                f"📡 {post_data.get('source_name', '?')}\n"
+                f"👁 {format_number(post_data.get('views', 0))} | ❤️ {format_number(post_data.get('likes', 0))}"
             )
         else:
             error_msg = queue_item.error_message or 'неизвестная ошибка'
