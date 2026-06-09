@@ -43,7 +43,7 @@ class Project(Base):
     name = Column(String, nullable=False)
     is_active = Column(Boolean, default=True)
     check_interval_minutes = Column(Integer, default=60)
-    post_interval_hours = Column(Integer, default=2)
+    post_interval_minutes = Column(Integer, default=2)  # ← переименовано и теперь в минутах
     active_hours_start = Column(Integer, default=8)
     active_hours_end = Column(Integer, default=22)
     signature = Column(String, nullable=True)
@@ -135,7 +135,7 @@ class PublishedPost(Base):
     published_at = Column(DateTime, default=datetime.utcnow)
 
 
-# === ОБЩИЕ ТАБЛИЦЫ ===
+# === ОБЩИЕ ТАБЛИЦЫ (без префикса) ===
 
 class Worker(Base):
     __tablename__ = "workers"
