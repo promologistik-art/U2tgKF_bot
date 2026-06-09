@@ -399,7 +399,7 @@ async def media_filter_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     if choice == "shorts_only":
         context.user_data['temp_max_video_duration'] = None
-        await ask_download_mode(update, context)
+        await ask_remove_text(update, context)
         return
 
     keyboard = [
@@ -425,40 +425,8 @@ async def duration_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     duration = int(choice)
     context.user_data['temp_max_video_duration'] = duration if duration > 0 else None
 
-    await ask_download_mode(update, context)
-    return
-
-
-async def ask_download_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton("📷 Превью (быстро)", callback_data="u2tg_dl_preview")],
-        [InlineKeyboardButton("🎬 Шортсы (полное видео)", callback_data="u2tg_dl_full_shorts")],
-    ]
-
-    context.user_data[DIALOG_STEP] = "selecting_download"
-
-    if update.callback_query:
-        await update.callback_query.edit_message_text(
-            "📥 <b>Режим скачивания:</b>\n\nВыберите, как загружать видео:",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="HTML"
-        )
-    else:
-        await update.message.reply_text(
-            "📥 <b>Режим скачивания:</b>\n\nВыберите, как загружать видео:",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="HTML"
-        )
-
-
-async def download_mode_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    choice = query.data.replace("u2tg_dl_", "")
-    context.user_data['temp_download_mode'] = choice
-
     await ask_remove_text(update, context)
+    return
 
 
 async def ask_remove_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -494,7 +462,6 @@ async def remove_text_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     criteria = context.user_data.get('temp_criteria', {})
     media_filter = context.user_data.get('temp_media_filter', 'all')
     max_video_duration = context.user_data.get('temp_max_video_duration')
-    download_mode = context.user_data.get('temp_download_mode', 'preview')
 
     if not temp:
         await query.edit_message_text("❌ Ошибка: данные не найдены.")
@@ -541,7 +508,6 @@ async def remove_text_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             media_filter=media_filter,
             remove_original_text=remove_text,
             max_video_duration=max_video_duration,
-            download_mode=download_mode,
             max_age_hours=24
         )
         session.add(channel)
@@ -557,17 +523,11 @@ async def remove_text_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         criteria_parts.append(f"❤️ от {criteria['min_likes']}")
     criteria_display = ", ".join(criteria_parts) if criteria_parts else "без критериев"
 
-    dl_mode_text = {
-        'preview': '📷 Превью',
-        'full_shorts': '🎬 Полное видео (шортсы)'
-    }.get(download_mode, '📷 Превью')
-
     text_parts = [f"✅ Источник «{temp['name']}» добавлен!"]
     text_parts.append(f"📋 Критерии: {criteria_display}")
     text_parts.append(f"📷 Контент: {filter_text}")
     if max_video_duration:
         text_parts.append(f"🎬 Длительность: до {max_video_duration} сек")
-    text_parts.append(f"📥 Режим: {dl_mode_text}")
     text_parts.append(f"📝 Описание: {'удаляется' if remove_text else 'оставляется'}")
 
     await query.edit_message_text("\n".join(text_parts))
@@ -623,11 +583,9 @@ async def finish_source_addition(update: Update, context: ContextTypes.DEFAULT_T
     if update.callback_query:
         await update.callback_query.edit_message_text(reply)
     else:
-        # Если нет callback_query, но есть message — используем reply_text
         if update.message:
             await update.message.reply_text(reply)
         else:
-            # Если нет ни того, ни другого — логируем ошибку
             logger.warning(f"Neither callback_query nor message found in finish_source_addition for reply: {reply}")
 
     _clear_dialog(context)
@@ -650,7 +608,7 @@ def _clear_dialog(context):
         'temp_criteria', 'temp_criteria_views', 'temp_media_filter',
         'temp_max_video_duration', 'youtube_search_query',
         'youtube_country', 'youtube_category', 'youtube_content_type',
-        'temp_download_mode', DIALOG_STEP, DIALOG_TYPE
+        DIALOG_STEP, DIALOG_TYPE
     ]
     for k in keys:
         context.user_data.pop(k, None)
@@ -681,14 +639,11 @@ async def show_edit_source_menu(query, source_id: int):
             criteria_parts.append(f"❤️ ≥{source.criteria['min_likes']}")
     criteria_str = ", ".join(criteria_parts) if criteria_parts else "без критериев"
 
-    dl_mode_text = {'preview': '📷', 'full_shorts': '🎬'}.get(getattr(source, 'download_mode', 'preview'), '📷')
-
     text = (
         f"✏️ <b>Редактирование {source.name}</b>\n\n"
         f"📊 Критерии: {criteria_str}\n"
         f"📷 Контент: {filter_names.get(source.media_filter, 'все')}\n"
         f"🎬 Длительность: {'до ' + str(source.max_video_duration) + 'с' if source.max_video_duration else 'без ограничений'}\n"
-        f"📥 Режим: {dl_mode_text}\n"
         f"📝 Описание: {'удаляется' if source.remove_original_text else 'оставляется'}\n"
         f"🚫 Стоп-фразы: {source.exclude_phrases or 'нет'}\n"
         f"🔍 Ключевые слова: {source.include_keywords or 'не указаны'}\n"
@@ -696,7 +651,6 @@ async def show_edit_source_menu(query, source_id: int):
     keyboard = [
         [InlineKeyboardButton("📊 Критерии", callback_data=f"edit_criteria_{source_id}")],
         [InlineKeyboardButton("📷 Контент", callback_data=f"edit_media_{source_id}")],
-        [InlineKeyboardButton("📥 Режим", callback_data=f"edit_download_{source_id}")],
         [InlineKeyboardButton("📝 Описание", callback_data=f"edit_text_{source_id}")],
         [InlineKeyboardButton("🚫 Стоп-фразы", callback_data=f"edit_phrases_{source_id}")],
         [InlineKeyboardButton("🔍 Ключевые слова", callback_data=f"edit_keywords_{source_id}")],
@@ -790,18 +744,6 @@ async def edit_remove_text_callback(update: Update, context: ContextTypes.DEFAUL
         await session.execute(sql_update(SourceChannel).where(SourceChannel.id == source_id).values(remove_original_text=remove_text))
         await session.commit()
     await query.edit_message_text(f"✅ Описание: {'удаляется' if remove_text else 'оставляется'}")
-    await show_edit_source_menu(query, source_id)
-
-
-async def edit_download_mode_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    choice = query.data.replace("edit_dl_", "")
-    source_id = context.user_data.get('edit_source_id')
-    async with AsyncSessionLocal() as session:
-        await session.execute(sql_update(SourceChannel).where(SourceChannel.id == source_id).values(download_mode=choice))
-        await session.commit()
-    await query.edit_message_text(f"✅ Режим скачивания обновлён")
     await show_edit_source_menu(query, source_id)
 
 
@@ -929,9 +871,8 @@ async def my_sources(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if "min_likes" in src.criteria:
                 criteria_parts.append(f"❤️ ≥{src.criteria['min_likes']}")
         criteria_str = ", ".join(criteria_parts) if criteria_parts else "без критериев"
-        dl_mode_text = {'preview': '📷', 'full_shorts': '🎬'}.get(getattr(src, 'download_mode', 'preview'), '📷')
         status_icon = "✅" if src.is_active else "❌"
-        text += f"{status_icon} {dl_mode_text} {type_icon} <b>{src.name}</b>\n"
+        text += f"{status_icon} {type_icon} <b>{src.name}</b>\n"
         text += f"   📊 {criteria_str}\n"
         text += f"   📷 {filter_names.get(src.media_filter, 'все')}"
         if src.max_video_duration:
