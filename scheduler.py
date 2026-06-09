@@ -306,11 +306,7 @@ class Scheduler:
             logger.info(f"📤 Found {len(posts_to_publish)} videos to queue")
             
             msk_now = get_moscow_time().replace(tzinfo=None)
-            interval_minutes = max(
-                int(project.post_interval_hours * 60),
-                user.min_post_interval_minutes,
-                Config.MIN_POST_INTERVAL_MINUTES
-            )
+            interval_minutes = max(project.post_interval_minutes, user.min_post_interval_minutes)
             start_hour = project.active_hours_start
             end_hour = project.active_hours_end
             
