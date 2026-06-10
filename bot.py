@@ -7,9 +7,10 @@ Version: 1.2.0 (08.06.2026) — Reply-based source addition
 import asyncio
 import logging
 import sys
+from telegram import Update
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
-    MessageHandler, filters, ConversationHandler
+    MessageHandler, filters, ConversationHandler, ContextTypes
 )
 
 from config import Config
