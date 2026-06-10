@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 YouTube Content Bot — U2TG
-Version: 1.2.1 (10.06.2026) — Fixed project creation hang + ConversationHandler for settings
+Version: 1.3.0 (10.06.2026) — Fixed UX: no REPLY required, reordered search flow, new criteria
 """
 
 import asyncio
@@ -61,7 +61,6 @@ from handlers import (
     AWAITING_MEDIA_FILTER, AWAITING_REMOVE_TEXT,
     AWAITING_EDIT_VIEWS, AWAITING_EDIT_REACTIONS, AWAITING_EDIT_EXCLUDE_PHRASES,
     AWAITING_BROADCAST_MESSAGE, AWAITING_KEYWORDS, AWAITING_EDIT_KEYWORDS,
-    # YouTube states
     AWAITING_YOUTUBE_SOURCE_TYPE,
     AWAITING_YOUTUBE_CHANNEL_ID,
     AWAITING_YOUTUBE_LINK,
@@ -84,13 +83,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# ============ ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ БЕЗОПАСНОГО СОЗДАНИЯ ПРОЕКТА ============
 async def safe_handle_project_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"🔍 safe_handle_project_name called, awaiting_project_name = {context.user_data.get('awaiting_project_name')}")
     if not context.user_data.get('awaiting_project_name'):
         return False
     return await handle_project_name(update, context)
-# ===========================================================================
 
 
 async def main():
@@ -154,7 +151,6 @@ async def main():
     app.add_handler(CallbackQueryHandler(admin_back_callback, pattern="^admin_back$"))
     app.add_handler(CallbackQueryHandler(admin_callback, pattern="^(admin_|user_manage_|tariff_set_|user_tariff_|extend_user_|deactivate_user_|activate_user_|tariff_for_|set_tariff_|admin_set_tariff|admin_extend_trial|admin_deactivate|admin_activate)"))
     
-    # U2TG source addition callbacks
     app.add_handler(CallbackQueryHandler(youtube_source_type_callback, pattern="^u2tg_type_"))
     app.add_handler(CallbackQueryHandler(youtube_country_callback, pattern="^u2tg_country_"))
     app.add_handler(CallbackQueryHandler(youtube_category_callback, pattern="^u2tg_category_"))
@@ -165,7 +161,6 @@ async def main():
     app.add_handler(CallbackQueryHandler(remove_text_callback, pattern="^u2tg_text_"))
     app.add_handler(CallbackQueryHandler(add_keywords_skip_callback, pattern="^u2tg_keywords_skip"))
     
-    # Source management
     app.add_handler(CallbackQueryHandler(edit_source_callback, pattern="^edit_source_"))
     app.add_handler(CallbackQueryHandler(delete_source_callback, pattern="^del_source_"))
     app.add_handler(CallbackQueryHandler(confirm_delete_source_callback, pattern="^confirm_delete_source$"))
@@ -235,11 +230,11 @@ async def main():
     app.add_handler(set_signature_conv)
     
     # ============ Message Handlers ============
-    # Пересланные сообщения — первыми (самые специфичные)
     app.add_handler(MessageHandler(filters.FORWARDED, add_target_forward))
-    # Reply handler для добавления/редактирования источников
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.REPLY, handle_source_input))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.REPLY, handle_edit_reply))
+    # Source input — принимает обычные сообщения, не требует REPLY
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_source_input))
+    # Edit reply — принимает обычные сообщения, не требует REPLY
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_reply))
     # Общий обработчик текста (название проекта) — последним
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, safe_handle_project_name))
     
@@ -247,7 +242,7 @@ async def main():
     await app.start()
     await app.updater.start_polling(allowed_updates=["message", "callback_query"])
     
-    logger.info("🟢 U2TG started (version 1.2.1)")
+    logger.info("🟢 U2TG started (version 1.3.0)")
     
     try:
         await asyncio.Event().wait()
