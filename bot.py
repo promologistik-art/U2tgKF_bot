@@ -83,6 +83,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+# ============ ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ БЕЗОПАСНОГО СОЗДАНИЯ ПРОЕКТА ============
+async def safe_handle_project_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get('awaiting_project_name'):
+        return False
+    return await handle_project_name(update, context)
+# ===========================================================================
+
+
 async def main():
     await init_db()
     logger.info("Database initialized")
@@ -183,7 +191,8 @@ async def main():
     # ============ Message Handlers ============
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_source_input))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_reply))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_project_name))
+    # Обработчик названия проекта с защитой от перехвата
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, safe_handle_project_name))
     app.add_handler(MessageHandler(filters.FORWARDED, add_target_forward))
     
     await app.initialize()
