@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 YouTube Content Bot — U2TG
-Version: 1.3.0 (10.06.2026) — Fixed UX: no REPLY required, reordered search flow, new criteria
+Version: 1.3.1 (10.06.2026) — Fixed MessageHandler order
 """
 
 import asyncio
@@ -230,19 +230,20 @@ async def main():
     app.add_handler(set_signature_conv)
     
     # ============ Message Handlers ============
+    # Пересланные сообщения
     app.add_handler(MessageHandler(filters.FORWARDED, add_target_forward))
-    # Source input — принимает обычные сообщения, не требует REPLY
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_source_input))
-    # Edit reply — принимает обычные сообщения, не требует REPLY
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_reply))
-    # Общий обработчик текста (название проекта) — последним
+    # Название проекта — ПЕРВЫМ среди текстовых
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, safe_handle_project_name))
+    # Источники — после проекта
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_source_input))
+    # Редактирование — после источников
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_reply))
     
     await app.initialize()
     await app.start()
     await app.updater.start_polling(allowed_updates=["message", "callback_query"])
     
-    logger.info("🟢 U2TG started (version 1.3.0)")
+    logger.info("🟢 U2TG started (version 1.3.1)")
     
     try:
         await asyncio.Event().wait()
