@@ -601,28 +601,30 @@ async def finish_source_addition(update: Update, context: ContextTypes.DEFAULT_T
     if keywords:
         reply = f"✅ Источник добавлен!\n🎯 Фильтр по словам: {keywords}"
     else:
-        reply = "✅ Источник готов!"
+        reply = "✅ Источник добавлен! Фильтр по словам не указан."
 
     if update.callback_query:
         await update.callback_query.edit_message_text(reply)
-    else:
-        if update.message:
-            await update.message.reply_text(reply)
+    elif update.message:
+        await update.message.reply_text(reply)
 
     _clear_dialog(context)
 
     sources_count = await get_sources_count(project_id)
     target = await get_project_target(project_id)
     if target and sources_count >= 1:
-        await update.message.reply_text(
+        final_text = (
             f"✅ <b>Проект «{project_name}» готов к работе!</b>\n\n"
             f"• /set_interval — настроить частоту парсинга\n"
             f"• /set_post_interval — настроить интервал публикации\n"
             f"• /set_signature — добавить подпись\n"
             f"• /parse — запустить первый парсинг\n"
-            f"• /add_source — добавить ещё источник",
-            parse_mode="HTML"
+            f"• /add_source — добавить ещё источник"
         )
+        if update.callback_query:
+            await update.callback_query.message.reply_text(final_text, parse_mode="HTML")
+        elif update.message:
+            await update.message.reply_text(final_text, parse_mode="HTML")
 
 
 def _clear_dialog(context):
