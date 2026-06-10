@@ -5,6 +5,7 @@ from sqlalchemy import select
 from database import AsyncSessionLocal
 from models import PostQueue, Project, PublishedPost
 from posters import TelegramPoster
+from config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,7 @@ class PostScheduler:
                 await asyncio.sleep(60)
 
     async def _check_and_publish(self):
-        """Публикует ОДИН пост за раз с проверкой интервала."""
+        """Публикует ОДИН пост за раз с проверкой интервала и активных часов."""
         async with AsyncSessionLocal() as session:
             # Берём самый старый pending пост
             result = await session.execute(
@@ -50,29 +51,36 @@ class PostScheduler:
             )
             project = result.scalar_one_or_none()
             
-            if project:
-                result = await session.execute(
-                    select(PublishedPost).where(
-                        PublishedPost.project_id == project.id
-                    ).order_by(PublishedPost.published_at.desc()).limit(1)
+            if not project:
+                return
+            
+            # Проверка активных часов
+            msk_now = datetime.utcnow() + timedelta(hours=3)
+            if msk_now.hour < project.active_hours_start or msk_now.hour >= project.active_hours_end:
+                logger.debug(f"⏰ Outside active hours for project {project.id}, skipping post {queue_item.id}")
+                return
+            
+            result = await session.execute(
+                select(PublishedPost).where(
+                    PublishedPost.project_id == project.id
+                ).order_by(PublishedPost.published_at.desc()).limit(1)
+            )
+            last_published = result.scalar_one_or_none()
+            
+            if last_published and last_published.published_at:
+                interval_minutes = max(
+                    int(project.post_interval_minutes),
+                    Config.MIN_POST_INTERVAL_MINUTES
                 )
-                last_published = result.scalar_one_or_none()
+                last_msk = last_published.published_at + timedelta(hours=3)
+                elapsed = (msk_now - last_msk).total_seconds() / 60
                 
-                if last_published and last_published.published_at:
-                    interval_minutes = max(
-                        int(project.post_interval_hours * 60),
-                        30
+                if elapsed < interval_minutes:
+                    logger.info(
+                        f"⏳ Post {queue_item.id}: only {elapsed:.0f}min since last, "
+                        f"need {interval_minutes}min for project '{project.name}'"
                     )
-                    msk_now = datetime.utcnow() + timedelta(hours=3)
-                    last_msk = last_published.published_at + timedelta(hours=3)
-                    elapsed = (msk_now - last_msk).total_seconds() / 60
-                    
-                    if elapsed < interval_minutes:
-                        logger.info(
-                            f"⏳ Post {queue_item.id}: only {elapsed:.0f}min since last, "
-                            f"need {interval_minutes}min for project '{project.name}'"
-                        )
-                        return
+                    return
         
         # Публикуем
         try:

@@ -109,6 +109,10 @@ async def youtube_source_type_callback(update: Update, context: ContextTypes.DEF
 
 
 async def handle_source_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Если ждём название проекта — пропускаем (пусть handle_project_name обработает)
+    if context.user_data.get('awaiting_project_name'):
+        return False
+
     if not update.message:
         return False
 
@@ -597,7 +601,9 @@ async def finish_source_addition(update: Update, context: ContextTypes.DEFAULT_T
             f"✅ <b>Проект «{project_name}» готов к работе!</b>\n\n"
             f"• /set_interval — частота парсинга\n"
             f"• /set_post_interval — интервал публикаций\n"
-            f"• /parse — запустить парсинг",
+            f"• /set_signature — добавить подпись\n"
+            f"• /parse — запустить парсинг\n"
+            f"• /add_source — добавить ещё источник",
             parse_mode="HTML"
         )
 
@@ -613,6 +619,8 @@ def _clear_dialog(context):
     for k in keys:
         context.user_data.pop(k, None)
 
+
+# ============ РЕДАКТИРОВАНИЕ ============
 
 async def edit_source_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -686,12 +694,6 @@ async def edit_source_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("📺 Обычные", callback_data="edit_media_long_only")],
         ]
         await query.edit_message_text("📷 Выберите тип контента:", reply_markup=InlineKeyboardMarkup(keyboard))
-    elif data.startswith("edit_download_"):
-        keyboard = [
-            [InlineKeyboardButton("📷 Превью", callback_data="edit_dl_preview")],
-            [InlineKeyboardButton("🎬 Шортсы (полное)", callback_data="edit_dl_full_shorts")],
-        ]
-        await query.edit_message_text("📥 Выберите режим скачивания:", reply_markup=InlineKeyboardMarkup(keyboard))
     elif data.startswith("edit_text_"):
         keyboard = [
             [InlineKeyboardButton("✅ Оставлять", callback_data="edit_text_keep")],
@@ -727,7 +729,9 @@ async def edit_media_filter_callback(update: Update, context: ContextTypes.DEFAU
     source_id = context.user_data.get('edit_source_id')
     async with AsyncSessionLocal() as session:
         await session.execute(
-            sql_update(SourceChannel).where(SourceChannel.id == source_id).values(media_filter=choice, max_video_duration=None if choice == "shorts_only" else None)
+            sql_update(SourceChannel)
+            .where(SourceChannel.id == source_id)
+            .values(media_filter=choice, max_video_duration=None if choice == "shorts_only" else None)
         )
         await session.commit()
     await query.edit_message_text(f"✅ Тип контента обновлён")
@@ -837,6 +841,8 @@ async def handle_edit_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return False
 
 
+# ============ СПИСОК ИСТОЧНИКОВ ============
+
 async def my_sources(update: Update, context: ContextTypes.DEFAULT_TYPE):
     telegram_id = update.effective_user.id
     project = await require_project(update, context)
@@ -888,6 +894,8 @@ async def my_sources(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
 
+
+# ============ УДАЛЕНИЕ ============
 
 async def delete_source_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
