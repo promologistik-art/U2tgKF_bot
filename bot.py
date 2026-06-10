@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 YouTube Content Bot — U2TG
-Version: 1.3.1 (10.06.2026) — Fixed MessageHandler order
+Version: 1.3.2 (10.06.2026) — Unified text handler, fixed message routing
 """
 
 import asyncio
@@ -83,11 +83,28 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-async def safe_handle_project_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info(f"🔍 safe_handle_project_name called, awaiting_project_name = {context.user_data.get('awaiting_project_name')}")
-    if not context.user_data.get('awaiting_project_name'):
-        return False
-    return await handle_project_name(update, context)
+async def unified_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Единый обработчик текстовых сообщений с приоритетами."""
+    # Приоритет 1: создание проекта
+    if context.user_data.get('awaiting_project_name'):
+        logger.info("📁 Routing to handle_project_name")
+        return await handle_project_name(update, context)
+    
+    # Приоритет 2: диалог источника
+    from handlers.sources import DIALOG_STEP
+    step = context.user_data.get(DIALOG_STEP)
+    if step:
+        logger.info(f"📥 Routing to handle_source_input, step={step}")
+        return await handle_source_input(update, context)
+    
+    # Приоритет 3: редактирование источника
+    edit_source_id = context.user_data.get('edit_source_id')
+    if step and edit_source_id:
+        logger.info(f"✏️ Routing to handle_edit_reply")
+        return await handle_edit_reply(update, context)
+    
+    logger.info("❓ No handler matched")
+    return False
 
 
 async def main():
@@ -230,20 +247,15 @@ async def main():
     app.add_handler(set_signature_conv)
     
     # ============ Message Handlers ============
-    # Пересланные сообщения
     app.add_handler(MessageHandler(filters.FORWARDED, add_target_forward))
-    # Название проекта — ПЕРВЫМ среди текстовых
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, safe_handle_project_name))
-    # Источники — после проекта
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_source_input))
-    # Редактирование — после источников
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_reply))
+    # Единый обработчик всего текста
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unified_text_handler))
     
     await app.initialize()
     await app.start()
     await app.updater.start_polling(allowed_updates=["message", "callback_query"])
     
-    logger.info("🟢 U2TG started (version 1.3.1)")
+    logger.info("🟢 U2TG started (version 1.3.2)")
     
     try:
         await asyncio.Event().wait()
