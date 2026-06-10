@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 YouTube Content Bot — U2TG
-Version: 1.2.0 (08.06.2026) — Reply-based source addition
+Version: 1.2.1 (10.06.2026) — Fixed project creation hang + ConversationHandler for settings
 """
 
 import asyncio
@@ -92,6 +92,7 @@ async def safe_handle_project_name(update: Update, context: ContextTypes.DEFAULT
     return await handle_project_name(update, context)
 # ===========================================================================
 
+
 async def main():
     await init_db()
     logger.info("Database initialized")
@@ -147,9 +148,6 @@ async def main():
     app.add_handler(CommandHandler("cancel", cancel))
     app.add_handler(CommandHandler("add_source", add_source_start))
     app.add_handler(CommandHandler("add_target", add_target_start))
-    app.add_handler(CommandHandler("set_interval", set_interval_start))
-    app.add_handler(CommandHandler("set_post_interval", set_post_interval_start))
-    app.add_handler(CommandHandler("set_signature", set_signature_start))
     app.add_handler(CommandHandler("broadcast", broadcast_start))
     
     # ============ CallbackQueryHandlers ============
@@ -181,28 +179,75 @@ async def main():
     app.add_handler(CallbackQueryHandler(project_menu_callback, pattern="^project_menu_"))
     app.add_handler(CallbackQueryHandler(back_to_projects_callback, pattern="^back_to_projects$"))
     app.add_handler(CallbackQueryHandler(projects_callback, pattern="^(create_project|select_project_|delete_project_|confirm_delete_|cancel_delete|stats_project_|project_sources_|project_change_target_)"))
-    app.add_handler(CallbackQueryHandler(set_interval_start_callback, pattern="^project_set_check_"))
-    app.add_handler(CallbackQueryHandler(set_post_interval_start_callback, pattern="^project_set_post_"))
-    app.add_handler(CallbackQueryHandler(set_signature_start_callback, pattern="^project_set_signature_"))
     app.add_handler(CallbackQueryHandler(add_target_continue_callback, pattern="^add_target_continue$"))
-    app.add_handler(CallbackQueryHandler(set_interval_callback, pattern="^interval_"))
-    app.add_handler(CallbackQueryHandler(set_post_interval_callback, pattern="^post_"))
-    app.add_handler(CallbackQueryHandler(set_post_start_time_callback, pattern="^starttime_"))
+    
+    # ============ ConversationHandlers для настроек ============
+    set_interval_conv = ConversationHandler(
+        entry_points=[
+            CommandHandler("set_interval", set_interval_start),
+            CallbackQueryHandler(set_interval_start_callback, pattern="^project_set_check_")
+        ],
+        states={
+            AWAITING_INTERVAL: [
+                CallbackQueryHandler(set_interval_callback, pattern="^interval_"),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        per_message=False,
+        allow_reentry=True
+    )
+    
+    set_post_interval_conv = ConversationHandler(
+        entry_points=[
+            CommandHandler("set_post_interval", set_post_interval_start),
+            CallbackQueryHandler(set_post_interval_start_callback, pattern="^project_set_post_")
+        ],
+        states={
+            AWAITING_POST_INTERVAL: [
+                CallbackQueryHandler(set_post_interval_callback, pattern="^post_"),
+            ],
+            AWAITING_POST_START_TIME: [
+                CallbackQueryHandler(set_post_start_time_callback, pattern="^starttime_"),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        per_message=False,
+        allow_reentry=True
+    )
+    
+    set_signature_conv = ConversationHandler(
+        entry_points=[
+            CommandHandler("set_signature", set_signature_start),
+            CallbackQueryHandler(set_signature_start_callback, pattern="^project_set_signature_")
+        ],
+        states={
+            AWAITING_SIGNATURE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, set_signature_input),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        per_message=False,
+        allow_reentry=True
+    )
+    
+    app.add_handler(set_interval_conv)
+    app.add_handler(set_post_interval_conv)
+    app.add_handler(set_signature_conv)
     
     # ============ Message Handlers ============
-    # Обработчик названия проекта — должен быть ПЕРВЫМ
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, safe_handle_project_name))
+    # Пересланные сообщения — первыми (самые специфичные)
+    app.add_handler(MessageHandler(filters.FORWARDED, add_target_forward))
     # Reply handler для добавления/редактирования источников
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.REPLY, handle_source_input))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.REPLY, handle_edit_reply))
-    # Пересланные сообщения для add_target
-    app.add_handler(MessageHandler(filters.FORWARDED, add_target_forward))
+    # Общий обработчик текста (название проекта) — последним
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, safe_handle_project_name))
     
     await app.initialize()
     await app.start()
     await app.updater.start_polling(allowed_updates=["message", "callback_query"])
     
-    logger.info("🟢 U2TG started (version 1.2.0)")
+    logger.info("🟢 U2TG started (version 1.2.1)")
     
     try:
         await asyncio.Event().wait()

@@ -14,6 +14,21 @@ from .constants import CURRENT_PROJECT_KEY
 logger = logging.getLogger(__name__)
 
 
+async def _reset_all_dialogs(context: ContextTypes.DEFAULT_TYPE):
+    """Сбрасывает все флаги активных диалогов перед созданием проекта."""
+    keys_to_remove = [
+        'temp_project_id', 'temp_post_interval', 'temp_media_filter',
+        'temp_max_video_duration', 'temp_criteria', 'edit_source_id',
+        'awaiting_criteria', 'awaiting_duration', 'awaiting_text_choice',
+        'edit_views', 'edit_media_filter', 'temp_source', 'temp_project_name',
+        'temp_criteria_views', 'temp_source_id', 'delete_source_id',
+        'awaiting_broadcast', 'awaiting_project_name'
+    ]
+    for key in keys_to_remove:
+        context.user_data.pop(key, None)
+    logger.info("Dialogs reset before project creation")
+
+
 async def my_projects(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает список проектов с кнопками-названиями."""
     telegram_id = update.effective_user.id
@@ -116,7 +131,7 @@ async def project_menu_callback(update: Update, context: ContextTypes.DEFAULT_TY
         f"📥 Источников: {sources_count}\n"
         f"📤 Цель: {target_name}\n"
         f"⏰ Парсинг: каждые {project.check_interval_minutes} мин\n"
-        f"📅 Постинг: каждые {project.post_interval_minutes} мин\n"  # ← исправлено
+        f"📅 Постинг: каждые {project.post_interval_minutes} мин\n"
         f"🕐 Активные часы: {project.active_hours_start}:00 – {project.active_hours_end}:00\n"
         f"📊 Сегодня: спарсено {project.posts_parsed_today} / опубликовано {project.posts_posted_today}\n"
         f"📬 В очереди: {pending}\n"
@@ -157,8 +172,11 @@ async def projects_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not can_create and not user.is_admin:
             await query.edit_message_text(f"❌ {limit_msg}")
             return
-        await query.edit_message_text("📁 Введите название нового проекта:")
+        
+        await _reset_all_dialogs(context)
         context.user_data['awaiting_project_name'] = True
+        
+        await query.edit_message_text("📁 Введите название нового проекта:\n/cancel — отмена")
         return
     
     if data.startswith("select_project_"):
