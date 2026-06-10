@@ -190,10 +190,12 @@ async def main():
     app.add_handler(CallbackQueryHandler(set_post_start_time_callback, pattern="^starttime_"))
     
     # ============ Message Handlers ============
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_source_input))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_reply))
-    # Обработчик названия проекта с защитой от перехвата
+    # Обработчик названия проекта — должен быть ПЕРВЫМ
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, safe_handle_project_name))
+    # Reply handler для добавления/редактирования источников
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.REPLY, handle_source_input))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.REPLY, handle_edit_reply))
+    # Пересланные сообщения для add_target
     app.add_handler(MessageHandler(filters.FORWARDED, add_target_forward))
     
     await app.initialize()
