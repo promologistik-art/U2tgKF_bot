@@ -4,7 +4,7 @@ from telegram.ext import ContextTypes
 from sqlalchemy import select, delete
 from config import Config
 from database import AsyncSessionLocal
-from models import User, Project, SourceChannel, TargetChannel, PostQueue
+from models import User, Project, SourceChannel, TargetChannel, PostQueue, ParsedPost, PublishedPost
 from .utils import (
     get_current_project, get_sources_count, get_project_target,
     get_user_projects_count, check_user_access, check_action_limit
@@ -246,9 +246,11 @@ async def projects_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("confirm_delete_") and not data.startswith("confirm_delete_source"):
         project_id = int(data.replace("confirm_delete_", ""))
         async with AsyncSessionLocal() as session:
+            await session.execute(delete(ParsedPost).where(ParsedPost.project_id == project_id))
+            await session.execute(delete(PublishedPost).where(PublishedPost.project_id == project_id))
+            await session.execute(delete(PostQueue).where(PostQueue.project_id == project_id))
             await session.execute(delete(SourceChannel).where(SourceChannel.project_id == project_id))
             await session.execute(delete(TargetChannel).where(TargetChannel.project_id == project_id))
-            await session.execute(delete(PostQueue).where(PostQueue.project_id == project_id))
             await session.execute(delete(Project).where(Project.id == project_id))
             await session.commit()
         if context.user_data.get(CURRENT_PROJECT_KEY) == project_id:
