@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from sqlalchemy import select
+from sqlalchemy import select, update
 from database import AsyncSessionLocal
 from models import PostQueue, Project, PublishedPost
 from posters import TelegramPoster
@@ -24,15 +24,43 @@ class PostScheduler:
         while self._running:
             try:
                 await self._check_and_publish()
+                await self._cleanup_stuck_posts()
                 await asyncio.sleep(30)
             except Exception as e:
                 logger.error(f"PostScheduler error: {e}")
                 await asyncio.sleep(60)
 
+    async def _cleanup_stuck_posts(self):
+        """Помечает как failed посты, висящие в очереди больше 24 часов."""
+        try:
+            deadline = datetime.utcnow() - timedelta(hours=24)
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    select(PostQueue).where(
+                        PostQueue.status == "pending",
+                        PostQueue.scheduled_time < deadline
+                    )
+                )
+                stuck_posts = result.scalars().all()
+                
+                if stuck_posts:
+                    for post in stuck_posts:
+                        await session.execute(
+                            update(PostQueue)
+                            .where(PostQueue.id == post.id)
+                            .values(
+                                status="failed",
+                                error_message="Завис в очереди > 24 часов"
+                            )
+                        )
+                    await session.commit()
+                    logger.warning(f"🧹 Marked {len(stuck_posts)} stuck posts as failed")
+        except Exception as e:
+            logger.error(f"Cleanup stuck posts error: {e}")
+
     async def _check_and_publish(self):
         """Публикует ОДИН пост за раз с проверкой интервала и активных часов."""
         async with AsyncSessionLocal() as session:
-            # Берём самый старый pending пост
             result = await session.execute(
                 select(PostQueue).where(
                     PostQueue.status == "pending",
@@ -44,7 +72,6 @@ class PostScheduler:
         if not queue_item:
             return
         
-        # Проверяем интервал от последнего опубликованного поста в проекте
         async with AsyncSessionLocal() as session:
             result = await session.execute(
                 select(Project).where(Project.id == queue_item.project_id)
@@ -52,14 +79,28 @@ class PostScheduler:
             project = result.scalar_one_or_none()
             
             if not project:
+                logger.warning(f"Project {queue_item.project_id} not found, marking post {queue_item.id} as failed")
+                async with AsyncSessionLocal() as s:
+                    await s.execute(
+                        update(PostQueue)
+                        .where(PostQueue.id == queue_item.id)
+                        .values(status="failed", error_message="Проект не найден")
+                    )
+                    await s.commit()
                 return
             
             # Проверка активных часов
             msk_now = datetime.utcnow() + timedelta(hours=3)
-            if msk_now.hour < project.active_hours_start or msk_now.hour >= project.active_hours_end:
-                logger.debug(f"⏰ Outside active hours for project {project.id}, skipping post {queue_item.id}")
-                return
+            current_hour = msk_now.hour
             
+            start_hour = project.active_hours_start
+            end_hour = project.active_hours_end
+            
+            if end_hour != 24:
+                if current_hour < start_hour or current_hour >= end_hour:
+                    return
+            
+            # Проверка интервала
             result = await session.execute(
                 select(PublishedPost).where(
                     PublishedPost.project_id == project.id
@@ -67,18 +108,28 @@ class PostScheduler:
             )
             last_published = result.scalar_one_or_none()
             
+            interval_minutes = max(
+                int(project.post_interval_minutes),
+                Config.MIN_POST_INTERVAL_MINUTES
+            )
+            
             if last_published and last_published.published_at:
-                interval_minutes = max(
-                    int(project.post_interval_minutes),
-                    Config.MIN_POST_INTERVAL_MINUTES
-                )
                 last_msk = last_published.published_at + timedelta(hours=3)
                 elapsed = (msk_now - last_msk).total_seconds() / 60
                 
                 if elapsed < interval_minutes:
+                    # Переназначаем на правильное время вместо пропуска
+                    new_scheduled = last_published.published_at + timedelta(minutes=interval_minutes)
+                    await session.execute(
+                        update(PostQueue)
+                        .where(PostQueue.id == queue_item.id)
+                        .values(scheduled_time=new_scheduled)
+                    )
+                    await session.commit()
                     logger.info(
-                        f"⏳ Post {queue_item.id}: only {elapsed:.0f}min since last, "
-                        f"need {interval_minutes}min for project '{project.name}'"
+                        f"⏳ Post {queue_item.id} rescheduled: "
+                        f"only {elapsed:.0f}min since last, need {interval_minutes}min "
+                        f"→ moved to {(new_scheduled + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} MSK"
                     )
                     return
         
@@ -89,19 +140,33 @@ class PostScheduler:
             if success:
                 logger.info(f"✅ Published post {queue_item.id}")
                 
-                # Обновляем счётчик в проекте
                 async with AsyncSessionLocal() as session:
                     result = await session.execute(
                         select(Project).where(Project.id == queue_item.project_id)
                     )
                     db_project = result.scalar_one_or_none()
                     if db_project:
+                        today = datetime.utcnow().date()
+                        if db_project.last_reset and db_project.last_reset.date() < today:
+                            db_project.posts_parsed_today = 0
+                            db_project.posts_posted_today = 0
+                            db_project.last_reset = datetime.utcnow()
                         db_project.posts_posted_today += 1
                         await session.commit()
             else:
                 logger.warning(f"❌ Failed to publish post {queue_item.id}")
         except Exception as e:
             logger.error(f"Error publishing post {queue_item.id}: {e}")
+            try:
+                async with AsyncSessionLocal() as s:
+                    await s.execute(
+                        update(PostQueue)
+                        .where(PostQueue.id == queue_item.id)
+                        .values(status="failed", error_message=f"Критическая ошибка: {str(e)[:100]}")
+                    )
+                    await s.commit()
+            except:
+                pass
 
     async def stop(self):
         self._running = False
