@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 YouTube Content Bot — U2TG
-Version: 1.3.2 (10.06.2026) — Unified text handler, fixed message routing
+Version: 1.3.3 (10.06.2026) — Fixed edit reply routing, restored useful messages
 """
 
 import asyncio
@@ -89,20 +89,20 @@ async def unified_text_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     if context.user_data.get('awaiting_project_name'):
         logger.info("📁 Routing to handle_project_name")
         return await handle_project_name(update, context)
-    
-    # Приоритет 2: диалог источника
+
+    # Приоритет 2: редактирование источника (edit_source_id + step)
     from handlers.sources import DIALOG_STEP
     step = context.user_data.get(DIALOG_STEP)
+    edit_source_id = context.user_data.get('edit_source_id')
+    if step and edit_source_id:
+        logger.info(f"✏️ Routing to handle_edit_reply, step={step}")
+        return await handle_edit_reply(update, context)
+
+    # Приоритет 3: диалог источника (только step, без edit_source_id)
     if step:
         logger.info(f"📥 Routing to handle_source_input, step={step}")
         return await handle_source_input(update, context)
-    
-    # Приоритет 3: редактирование источника
-    edit_source_id = context.user_data.get('edit_source_id')
-    if step and edit_source_id:
-        logger.info(f"✏️ Routing to handle_edit_reply")
-        return await handle_edit_reply(update, context)
-    
+
     logger.info("❓ No handler matched")
     return False
 
@@ -248,14 +248,13 @@ async def main():
     
     # ============ Message Handlers ============
     app.add_handler(MessageHandler(filters.FORWARDED, add_target_forward))
-    # Единый обработчик всего текста
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unified_text_handler))
     
     await app.initialize()
     await app.start()
     await app.updater.start_polling(allowed_updates=["message", "callback_query"])
     
-    logger.info("🟢 U2TG started (version 1.3.2)")
+    logger.info("🟢 U2TG started (version 1.3.3)")
     
     try:
         await asyncio.Event().wait()
