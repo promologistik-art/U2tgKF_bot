@@ -86,11 +86,11 @@ logger = logging.getLogger(__name__)
 
 # ============ ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ БЕЗОПАСНОГО СОЗДАНИЯ ПРОЕКТА ============
 async def safe_handle_project_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info(f"🔍 safe_handle_project_name called, awaiting_project_name = {context.user_data.get('awaiting_project_name')}")
     if not context.user_data.get('awaiting_project_name'):
         return False
     return await handle_project_name(update, context)
 # ===========================================================================
-
 
 async def main():
     await init_db()
