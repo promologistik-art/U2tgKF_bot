@@ -269,7 +269,7 @@ async def handle_source_input(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def process_channel_input(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
     async with YouTubeScraper() as scraper:
-        channel_id = scraper._extract_channel_id(text)
+        channel_id = await scraper._extract_channel_id(text)
         if not channel_id:
             await update.message.reply_text("❌ Не удалось распознать ID канала. Попробуйте ещё раз.")
             return
