@@ -19,8 +19,26 @@ class Config:
     # PostgreSQL
     DATABASE_URL = os.getenv("DATABASE_URL")
     
-    # YouTube API
-    YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
+    # YouTube API — массив ключей с ротацией при quota exceeded
+    @staticmethod
+    def _load_youtube_keys():
+        keys = []
+        # Основной ключ
+        key1 = os.getenv("YOUTUBE_API_KEY")
+        if key1:
+            keys.append(key1)
+        # Дополнительные ключи
+        for i in range(2, 10):
+            key = os.getenv(f"YOUTUBE_API_KEY_{i}")
+            if key:
+                keys.append(key)
+            else:
+                break
+        if not keys:
+            raise ValueError("At least one YOUTUBE_API_KEY is required")
+        return keys
+    
+    YOUTUBE_API_KEYS = _load_youtube_keys.__func__()
     YOUTUBE_MAX_RESULTS = int(os.getenv("YOUTUBE_MAX_RESULTS", "50"))
     YOUTUBE_SEARCH_DAYS = int(os.getenv("YOUTUBE_SEARCH_DAYS", "7"))
     

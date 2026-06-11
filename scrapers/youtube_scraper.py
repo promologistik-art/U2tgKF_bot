@@ -14,8 +14,46 @@ logger = logging.getLogger(__name__)
 
 class YouTubeScraper:
     def __init__(self):
-        self.youtube = build('youtube', 'v3', developerKey=Config.YOUTUBE_API_KEY)
+        self._key_index = 0
+        self._build_client()
         self.max_results = Config.YOUTUBE_MAX_RESULTS
+
+    def _build_client(self):
+        key = Config.YOUTUBE_API_KEYS[self._key_index]
+        self.youtube = build('youtube', 'v3', developerKey=key)
+        logger.info(f"🔑 Using YouTube API key #{self._key_index + 1}/{len(Config.YOUTUBE_API_KEYS)}")
+
+    def _rotate_key(self) -> bool:
+        """Переключается на следующий API-ключ. Возвращает False если ключи кончились."""
+        self._key_index += 1
+        if self._key_index >= len(Config.YOUTUBE_API_KEYS):
+            logger.error("❌ All YouTube API keys exhausted!")
+            self._key_index = 0  # Сбрасываем на первый для следующей попытки
+            return False
+        self._build_client()
+        logger.warning(f"🔄 Rotated to API key #{self._key_index + 1}")
+        return True
+
+    def _is_quota_error(self, error: HttpError) -> bool:
+        """Проверяет, является ли ошибка превышением квоты."""
+        try:
+            reason = error.resp.get('content-type', '')
+            return error.resp.status in (429, 403) and 'quota' in str(error).lower()
+        except:
+            return error.resp.status in (429, 403)
+
+    async def _execute_with_retry(self, request_func, *args, **kwargs):
+        """Выполняет запрос с ротацией ключей при quota exceeded."""
+        max_rotations = len(Config.YOUTUBE_API_KEYS)
+        for attempt in range(max_rotations):
+            try:
+                return request_func(*args, **kwargs).execute()
+            except HttpError as e:
+                if self._is_quota_error(e):
+                    if self._rotate_key():
+                        continue
+                raise
+        raise Exception("All API keys exhausted")
 
     async def __aenter__(self):
         return self
@@ -46,6 +84,8 @@ class YouTubeScraper:
                 'view_count': int(channel['statistics'].get('viewCount', 0))
             }
         except HttpError as e:
+            if self._is_quota_error(e) and self._rotate_key():
+                return await self.get_channel_info(channel_id)
             logger.error(f"YouTube API error (channel info): {e}")
             return None
 
@@ -68,6 +108,8 @@ class YouTubeScraper:
             videos = await self._get_video_details(video_ids)
             return videos
         except HttpError as e:
+            if self._is_quota_error(e) and self._rotate_key():
+                return await self.get_videos_from_channel(channel_id, limit)
             logger.error(f"YouTube API error (channel videos): {e}")
             return []
 
@@ -120,6 +162,9 @@ class YouTubeScraper:
             videos = await self._get_video_details(video_ids)
             return videos
         except HttpError as e:
+            if self._is_quota_error(e) and self._rotate_key():
+                logger.warning(f"🔄 Quota exceeded, rotated key, retrying search...")
+                return await self.search_videos(query, country, category, content_type, limit)
             logger.error(f"YouTube API error (search): {e}")
             return []
 
@@ -144,6 +189,8 @@ class YouTubeScraper:
             
             return videos
         except HttpError as e:
+            if self._is_quota_error(e) and self._rotate_key():
+                return await self._get_video_details(video_ids)
             logger.error(f"YouTube API error (video details): {e}")
             return []
 
@@ -236,7 +283,6 @@ class YouTubeScraper:
         except HttpError:
             return None
 
-    # ============ ДОБАВЛЕННЫЙ МЕТОД ============
     async def download_full_video(self, video_url: str, save_path: str) -> bool:
         """
         Скачивает полное видео с помощью yt-dlp.
@@ -273,4 +319,3 @@ class YouTubeScraper:
         except Exception as e:
             logger.error(f"Failed to download video: {e}")
             return False
-    # ============================================
