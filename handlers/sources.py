@@ -395,13 +395,11 @@ async def add_source_criteria(update: Update, context: ContextTypes.DEFAULT_TYPE
     criteria = preset.get("criteria", {})
     context.user_data['temp_criteria'] = criteria
 
-    # Если "Самое популярное за сутки" — ставим max_age_hours=24
     if choice == "popular":
         context.user_data['temp_max_age_hours'] = 24
     else:
-        context.user_data['temp_max_age_hours'] = 24  # по умолчанию всё равно сутки
+        context.user_data['temp_max_age_hours'] = 24
 
-    # Переходим сразу к описанию, без выбора медиа-фильтра
     await ask_remove_text(update, context)
 
 
@@ -478,7 +476,6 @@ async def remove_text_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.edit_message_text("❌ Ошибка: данные не найдены.")
         return
 
-    # Определяем media_filter из типа контента (для поиска) или из temp_media_filter
     media_filter = context.user_data.get('temp_media_filter', 'all')
     content_type = context.user_data.get('youtube_content_type', 'all')
     if content_type == 'shorts':
@@ -639,7 +636,7 @@ def _clear_dialog(context):
         context.user_data.pop(k, None)
 
 
-# ============ ОСТАЛЬНЫЕ ФУНКЦИИ (без изменений) ============
+# ============ ОСТАЛЬНЫЕ ФУНКЦИИ ============
 
 async def show_media_filters(update: Update, context: ContextTypes.DEFAULT_TYPE, temp):
     keyboard = [
@@ -756,6 +753,12 @@ async def edit_source_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     data = query.data
 
+    # Колбэки выбора опций media/text — пропускаем, их обрабатывают отдельные хендлеры
+    if data.startswith("edit_media_") and data.split("_")[-1] in ("all", "shorts_only", "long_only"):
+        return
+    if data.startswith("edit_text_") and data.split("_")[-1] in ("keep", "remove"):
+        return
+
     if data.startswith("edit_clear_phrases_"):
         source_id = int(data.replace("edit_clear_phrases_", ""))
         async with AsyncSessionLocal() as session:
@@ -764,25 +767,36 @@ async def edit_source_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_edit_source_menu(query, source_id)
         return
 
-    source_id = int(data.split("_")[-1])
-    context.user_data['edit_source_id'] = source_id
-
-    if data.startswith("edit_criteria_"):
-        context.user_data[DIALOG_STEP] = "editing_views"
-        await query.edit_message_text("📊 Введите новые минимальные просмотры (0 = не учитывать):")
-    elif data.startswith("edit_media_"):
+    # Кнопка «📷 Контент» — показать меню выбора
+    if data.startswith("edit_media_"):
+        source_id = int(data.replace("edit_media_", ""))
+        context.user_data['edit_source_id'] = source_id
         keyboard = [
             [InlineKeyboardButton("📷 Все", callback_data="edit_media_all")],
             [InlineKeyboardButton("📱 Шортсы", callback_data="edit_media_shorts_only")],
             [InlineKeyboardButton("📺 Обычные", callback_data="edit_media_long_only")],
         ]
         await query.edit_message_text("📷 Выберите тип контента:", reply_markup=InlineKeyboardMarkup(keyboard))
-    elif data.startswith("edit_text_"):
+        return
+
+    # Кнопка «📝 Описание» — показать меню выбора
+    if data.startswith("edit_text_"):
+        source_id = int(data.replace("edit_text_", ""))
+        context.user_data['edit_source_id'] = source_id
         keyboard = [
             [InlineKeyboardButton("✅ Оставлять", callback_data="edit_text_keep")],
             [InlineKeyboardButton("❌ Удалять", callback_data="edit_text_remove")],
         ]
         await query.edit_message_text("📝 Оставлять или удалять описание?", reply_markup=InlineKeyboardMarkup(keyboard))
+        return
+
+    # Остальные — извлекаем source_id из конца
+    source_id = int(data.split("_")[-1])
+    context.user_data['edit_source_id'] = source_id
+
+    if data.startswith("edit_criteria_"):
+        context.user_data[DIALOG_STEP] = "editing_views"
+        await query.edit_message_text("📊 Введите новые минимальные просмотры (0 = не учитывать):")
     elif data.startswith("edit_phrases_"):
         async with AsyncSessionLocal() as session:
             result = await session.execute(select(SourceChannel).where(SourceChannel.id == source_id))
@@ -810,6 +824,9 @@ async def edit_media_filter_callback(update: Update, context: ContextTypes.DEFAU
     await query.answer()
     choice = query.data.replace("edit_media_", "")
     source_id = context.user_data.get('edit_source_id')
+    if not source_id:
+        await query.edit_message_text("❌ Ошибка: источник не выбран")
+        return
     async with AsyncSessionLocal() as session:
         await session.execute(
             sql_update(SourceChannel)
@@ -827,6 +844,9 @@ async def edit_remove_text_callback(update: Update, context: ContextTypes.DEFAUL
     choice = query.data.replace("edit_text_", "")
     remove_text = (choice == "remove")
     source_id = context.user_data.get('edit_source_id')
+    if not source_id:
+        await query.edit_message_text("❌ Ошибка: источник не выбран")
+        return
     async with AsyncSessionLocal() as session:
         await session.execute(sql_update(SourceChannel).where(SourceChannel.id == source_id).values(remove_original_text=remove_text))
         await session.commit()
