@@ -110,9 +110,14 @@ class TelegramPoster:
         has_media = media_path and os.path.exists(media_path)
         has_original_text = bool(original_text.strip())
         
-        # ЗАЩИТА: не публикуем если только подпись без медиа и без оригинального текста
+        # ЗАЩИТА: не публикуем если нет медиа и нет текста
         if not has_media and not has_original_text:
             await self._mark_failed(queue_item, "Нет медиа и нет текста — только подпись")
+            return False
+        
+        # ЗАЩИТА: YouTube-видео без медиа — не публикуем только текст
+        if not has_media and media_type == "video":
+            await self._mark_failed(queue_item, "Видео не скачалось")
             return False
         
         # ПОВТОРНАЯ ПРОВЕРКА ФИЛЬТРА МЕДИА ПРИ ПУБЛИКАЦИИ
