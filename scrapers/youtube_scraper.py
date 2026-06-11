@@ -28,7 +28,7 @@ class YouTubeScraper:
         self._key_index += 1
         if self._key_index >= len(Config.YOUTUBE_API_KEYS):
             logger.error("❌ All YouTube API keys exhausted!")
-            self._key_index = 0  # Сбрасываем на первый для следующей попытки
+            self._key_index = 0
             return False
         self._build_client()
         logger.warning(f"🔄 Rotated to API key #{self._key_index + 1}")
@@ -37,23 +37,9 @@ class YouTubeScraper:
     def _is_quota_error(self, error: HttpError) -> bool:
         """Проверяет, является ли ошибка превышением квоты."""
         try:
-            reason = error.resp.get('content-type', '')
             return error.resp.status in (429, 403) and 'quota' in str(error).lower()
         except:
             return error.resp.status in (429, 403)
-
-    async def _execute_with_retry(self, request_func, *args, **kwargs):
-        """Выполняет запрос с ротацией ключей при quota exceeded."""
-        max_rotations = len(Config.YOUTUBE_API_KEYS)
-        for attempt in range(max_rotations):
-            try:
-                return request_func(*args, **kwargs).execute()
-            except HttpError as e:
-                if self._is_quota_error(e):
-                    if self._rotate_key():
-                        continue
-                raise
-        raise Exception("All API keys exhausted")
 
     async def __aenter__(self):
         return self
@@ -251,6 +237,14 @@ class YouTubeScraper:
         return None
 
     def _extract_channel_id(self, url_or_input: str) -> Optional[str]:
+        # Очищаем URL от лишних путей после username
+        cleaned = re.sub(r'/shorts/?$', '', url_or_input)
+        cleaned = re.sub(r'/videos/?$', '', cleaned)
+        cleaned = re.sub(r'/featured/?$', '', cleaned)
+        cleaned = re.sub(r'/playlists/?$', '', cleaned)
+        cleaned = re.sub(r'/community/?$', '', cleaned)
+        cleaned = re.sub(r'/streams/?$', '', cleaned)
+        
         patterns = [
             r'(?:https?://)?(?:www\.)?youtube\.com/channel/(UC[a-zA-Z0-9_-]{22})',
             r'(?:https?://)?(?:www\.)?youtube\.com/@([a-zA-Z0-9_-]+)',
@@ -258,7 +252,7 @@ class YouTubeScraper:
             r'UC[a-zA-Z0-9_-]{22}'
         ]
         for pattern in patterns:
-            match = re.search(pattern, url_or_input)
+            match = re.search(pattern, cleaned)
             if match:
                 username = match.group(1)
                 if not username.startswith('UC'):
