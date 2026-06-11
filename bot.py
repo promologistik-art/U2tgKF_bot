@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 YouTube Content Bot — U2TG
-Version: 1.3.3 (10.06.2026) — Fixed edit reply routing, restored useful messages
+Version: 1.3.4 (11.06.2026) — Fixed edit media/text callback routing
 """
 
 import asyncio
@@ -178,14 +178,16 @@ async def main():
     app.add_handler(CallbackQueryHandler(remove_text_callback, pattern="^u2tg_text_"))
     app.add_handler(CallbackQueryHandler(add_keywords_skip_callback, pattern="^u2tg_keywords_skip"))
     
+    # Редактирование: специфичные хендлеры ДО общего
+    app.add_handler(CallbackQueryHandler(edit_media_filter_callback, pattern="^edit_media_"))
+    app.add_handler(CallbackQueryHandler(edit_remove_text_callback, pattern="^edit_text_"))
+    app.add_handler(CallbackQueryHandler(edit_source_start, pattern="^edit_(criteria|phrases|clear_phrases|keywords)_"))
     app.add_handler(CallbackQueryHandler(edit_source_callback, pattern="^edit_source_"))
+    
     app.add_handler(CallbackQueryHandler(delete_source_callback, pattern="^del_source_"))
     app.add_handler(CallbackQueryHandler(confirm_delete_source_callback, pattern="^confirm_delete_source$"))
     app.add_handler(CallbackQueryHandler(cancel_delete_source_callback, pattern="^cancel_delete_source$"))
     app.add_handler(CallbackQueryHandler(back_to_sources_callback, pattern="^back_to_sources$"))
-    app.add_handler(CallbackQueryHandler(edit_source_start, pattern="^edit_(criteria|media|text|phrases|clear_phrases|keywords)_"))
-    app.add_handler(CallbackQueryHandler(edit_media_filter_callback, pattern="^edit_media_"))
-    app.add_handler(CallbackQueryHandler(edit_remove_text_callback, pattern="^edit_text_"))
     
     app.add_handler(CallbackQueryHandler(delete_target_callback, pattern="^del_target_"))
     app.add_handler(CallbackQueryHandler(project_menu_callback, pattern="^project_menu_"))
@@ -254,7 +256,7 @@ async def main():
     await app.start()
     await app.updater.start_polling(allowed_updates=["message", "callback_query"])
     
-    logger.info("🟢 U2TG started (version 1.3.3)")
+    logger.info("🟢 U2TG started (version 1.3.4)")
     
     try:
         await asyncio.Event().wait()
