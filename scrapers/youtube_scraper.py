@@ -236,7 +236,7 @@ class YouTubeScraper:
                 return match.group(1)
         return None
 
-    def _extract_channel_id(self, url_or_input: str) -> Optional[str]:
+    async def _extract_channel_id(self, url_or_input: str) -> Optional[str]:
         # Очищаем URL от лишних путей после username
         cleaned = re.sub(r'/shorts/?$', '', url_or_input)
         cleaned = re.sub(r'/videos/?$', '', cleaned)
@@ -256,7 +256,7 @@ class YouTubeScraper:
             if match:
                 username = match.group(1)
                 if not username.startswith('UC'):
-                    channel_id = self._get_channel_id_by_username(username)
+                    channel_id = await self._get_channel_id_by_username(username)
                     if channel_id:
                         return channel_id
                 else:
