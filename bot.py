@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 YouTube Content Bot — U2TG
-Version: 1.3.4 (11.06.2026) — Fixed edit media/text callback routing
+Version: 1.3.5 (11.06.2026) — Fixed edit media/text routing with proper callback handling
 """
 
 import asyncio
@@ -85,12 +85,10 @@ logger = logging.getLogger(__name__)
 
 async def unified_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Единый обработчик текстовых сообщений с приоритетами."""
-    # Приоритет 1: создание проекта
     if context.user_data.get('awaiting_project_name'):
         logger.info("📁 Routing to handle_project_name")
         return await handle_project_name(update, context)
 
-    # Приоритет 2: редактирование источника (edit_source_id + step)
     from handlers.sources import DIALOG_STEP
     step = context.user_data.get(DIALOG_STEP)
     edit_source_id = context.user_data.get('edit_source_id')
@@ -98,7 +96,6 @@ async def unified_text_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         logger.info(f"✏️ Routing to handle_edit_reply, step={step}")
         return await handle_edit_reply(update, context)
 
-    # Приоритет 3: диалог источника (только step, без edit_source_id)
     if step:
         logger.info(f"📥 Routing to handle_source_input, step={step}")
         return await handle_source_input(update, context)
@@ -178,10 +175,10 @@ async def main():
     app.add_handler(CallbackQueryHandler(remove_text_callback, pattern="^u2tg_text_"))
     app.add_handler(CallbackQueryHandler(add_keywords_skip_callback, pattern="^u2tg_keywords_skip"))
     
-    # Редактирование: специфичные хендлеры ДО общего
-    app.add_handler(CallbackQueryHandler(edit_media_filter_callback, pattern="^edit_media_"))
-    app.add_handler(CallbackQueryHandler(edit_remove_text_callback, pattern="^edit_text_"))
-    app.add_handler(CallbackQueryHandler(edit_source_start, pattern="^edit_(criteria|phrases|clear_phrases|keywords)_"))
+    # Редактирование: опции выбора ДО общего обработчика
+    app.add_handler(CallbackQueryHandler(edit_media_filter_callback, pattern="^edit_media_(all|shorts_only|long_only)$"))
+    app.add_handler(CallbackQueryHandler(edit_remove_text_callback, pattern="^edit_text_(keep|remove)$"))
+    app.add_handler(CallbackQueryHandler(edit_source_start, pattern="^edit_(criteria|media|text|phrases|clear_phrases|keywords)_"))
     app.add_handler(CallbackQueryHandler(edit_source_callback, pattern="^edit_source_"))
     
     app.add_handler(CallbackQueryHandler(delete_source_callback, pattern="^del_source_"))
@@ -256,7 +253,7 @@ async def main():
     await app.start()
     await app.updater.start_polling(allowed_updates=["message", "callback_query"])
     
-    logger.info("🟢 U2TG started (version 1.3.4)")
+    logger.info("🟢 U2TG started (version 1.3.5)")
     
     try:
         await asyncio.Event().wait()
