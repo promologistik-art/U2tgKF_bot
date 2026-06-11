@@ -264,6 +264,7 @@ class YouTubeScraper:
         return None
 
     async def _get_channel_id_by_username(self, username: str) -> Optional[str]:
+        # Способ 1: через forHandle
         try:
             request = self.youtube.channels().list(
                 part='id',
@@ -272,10 +273,30 @@ class YouTubeScraper:
             response = request.execute()
             items = response.get('items', [])
             if items:
+                logger.info(f"✅ Found channel by handle: {username} → {items[0]['id']}")
                 return items[0]['id']
-            return None
-        except HttpError:
-            return None
+        except HttpError as e:
+            logger.debug(f"forHandle failed for {username}: {e}")
+
+        # Способ 2: через поиск по @username
+        try:
+            request = self.youtube.search().list(
+                part='snippet',
+                q=f'@{username}',
+                type='channel',
+                maxResults=1
+            )
+            response = request.execute()
+            items = response.get('items', [])
+            if items:
+                channel_id = items[0]['snippet']['channelId']
+                logger.info(f"✅ Found channel by search: {username} → {channel_id}")
+                return channel_id
+        except HttpError as e:
+            logger.debug(f"Search failed for {username}: {e}")
+
+        logger.warning(f"❌ Channel not found: {username}")
+        return None
 
     async def download_full_video(self, video_url: str, save_path: str) -> bool:
         """
