@@ -141,9 +141,10 @@ async def project_menu_callback(update: Update, context: ContextTypes.DEFAULT_TY
         text += f"✍️ Подпись: {project.signature}\n"
     
     keyboard = [
-        [InlineKeyboardButton("📊 Статистика", callback_data=f"stats_project_{project.id}")],
         [InlineKeyboardButton("📥 Источники", callback_data=f"project_sources_{project.id}")],
         [InlineKeyboardButton("🎯 Сменить цель", callback_data=f"project_change_target_{project.id}")],
+        [InlineKeyboardButton("🔄 Парсинг сейчас", callback_data=f"project_parse_{project.id}")],
+        [InlineKeyboardButton("📬 Очередь", callback_data=f"project_queue_{project.id}")],
         [InlineKeyboardButton("⏰ Интервал парсинга", callback_data=f"project_set_check_{project.id}")],
         [InlineKeyboardButton("📅 Интервал постинга", callback_data=f"project_set_post_{project.id}")],
         [InlineKeyboardButton("✍️ Подпись", callback_data=f"project_set_signature_{project.id}")],
@@ -213,6 +214,19 @@ async def projects_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             "🎯 Старая цель удалена.\n\nИспользуйте /add_target чтобы добавить новую цель."
         )
+    
+    elif data.startswith("project_parse_"):
+        project_id = int(data.replace("project_parse_", ""))
+        context.user_data[CURRENT_PROJECT_KEY] = project_id
+        await query.edit_message_text("🔄 Запускаю парсинг...")
+        from .parsing import parse_now
+        await parse_now(update, context)
+    
+    elif data.startswith("project_queue_"):
+        project_id = int(data.replace("project_queue_", ""))
+        context.user_data[CURRENT_PROJECT_KEY] = project_id
+        from .parsing import queue_status
+        await queue_status(update, context)
     
     elif data.startswith("project_set_check_"):
         project_id = int(data.replace("project_set_check_", ""))
