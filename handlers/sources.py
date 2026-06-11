@@ -56,7 +56,7 @@ CRITERIA_PRESETS = {
         "criteria": None
     },
     "none": {
-        "label": "⚡ Без критериев",
+        "label": "⚡ Без критериев (самое популярное за день)",
         "criteria": {}
     }
 }
