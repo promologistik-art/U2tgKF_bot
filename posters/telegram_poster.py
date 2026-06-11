@@ -73,7 +73,15 @@ class TelegramPoster:
         else:
             exclude_phrases = None
         
-        original_text = clean_caption(post_data.get("text", ""), exclude_phrases)
+        # Собираем текст: для YouTube — title + description, для Telegram — text
+        title = post_data.get("title", "")
+        description = post_data.get("description", "")
+        if title or description:
+            raw_text = f"{title}\n\n{description}" if title and description else (title or description)
+        else:
+            raw_text = post_data.get("text", "")
+        
+        original_text = clean_caption(raw_text, exclude_phrases)
         
         if remove_text:
             caption = ""
