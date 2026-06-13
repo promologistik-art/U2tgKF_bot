@@ -312,31 +312,26 @@ class Scheduler:
             
             last_scheduled_utc = await self._get_last_scheduled_time(project.id)
             
+            # Вычисляем время для ПЕРВОГО видео
             if last_scheduled_utc:
                 last_scheduled_msk = last_scheduled_utc + timedelta(hours=3)
                 next_time = last_scheduled_msk + timedelta(minutes=interval_minutes)
-                
-                if next_time <= msk_now:
-                    minutes_since_start = (msk_now.hour - start_hour) * 60 + msk_now.minute
-                    if minutes_since_start < 0:
-                        next_time = msk_now.replace(hour=start_hour, minute=0, second=0, microsecond=0)
-                    else:
-                        slots = (minutes_since_start + interval_minutes - 1) // interval_minutes
-                        next_time = msk_now.replace(hour=start_hour, minute=0, second=0, microsecond=0) + timedelta(minutes=slots * interval_minutes)
-                
-                if next_time.hour >= end_hour:
-                    next_time = next_time.replace(hour=start_hour, minute=0, second=0, microsecond=0) + timedelta(days=1)
             else:
+                next_time = msk_now
+            
+            # Если первое время в прошлом — сдвигаем на ближайший будущий слот
+            if next_time <= msk_now:
                 minutes_since_start = (msk_now.hour - start_hour) * 60 + msk_now.minute
                 if minutes_since_start < 0:
                     next_time = msk_now.replace(hour=start_hour, minute=0, second=0, microsecond=0)
                 else:
                     slots = (minutes_since_start + interval_minutes - 1) // interval_minutes
                     next_time = msk_now.replace(hour=start_hour, minute=0, second=0, microsecond=0) + timedelta(minutes=slots * interval_minutes)
-                
-                if next_time.hour >= end_hour:
-                    next_time = next_time.replace(hour=start_hour, minute=0, second=0, microsecond=0) + timedelta(days=1)
             
+            if next_time.hour >= end_hour:
+                next_time = next_time.replace(hour=start_hour, minute=0, second=0, microsecond=0) + timedelta(days=1)
+            
+            # Разносим все видео с интервалом
             for i, video in enumerate(posts_to_publish):
                 if i > 0:
                     next_time = next_time + timedelta(minutes=interval_minutes)
