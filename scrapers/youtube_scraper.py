@@ -311,6 +311,7 @@ class YouTubeScraper:
                 '--no-playlist',
                 '--quiet',
                 '--no-warnings',
+                '--extractor-args', 'youtube:skip=authcheck',
                 video_url
             ]
             
